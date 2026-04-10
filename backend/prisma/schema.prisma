@@ -1,0 +1,316 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum MemberRole {
+  owner
+  tenant
+  committee
+  guard
+  admin
+}
+
+enum MemberStatus {
+  pending
+  approved
+  rejected
+}
+
+enum ComplaintStatus {
+  open
+  assigned
+  in_progress
+  resolved
+  closed
+  escalated
+}
+
+enum ComplaintPriority {
+  low
+  medium
+  high
+  critical
+}
+
+enum PaymentStatus {
+  pending
+  success
+  failed
+  refunded
+}
+
+enum BillStatus {
+  unpaid
+  paid
+  partial
+  overdue
+}
+
+enum VisitorStatus {
+  pending
+  approved
+  rejected
+  expired
+  pre_approved
+}
+
+enum VisitorPurpose {
+  delivery
+  guest
+  cab
+  service
+  other
+}
+
+enum AnnouncementCategory {
+  general
+  maintenance
+  event
+  emergency
+  rule
+}
+
+enum AnnouncementPriority {
+  normal
+  important
+  urgent
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Society {
+  id           String   @id @default(uuid())
+  name         String   @db.VarChar(200)
+  address      String
+  city         String   @db.VarChar(100)
+  state        String   @db.VarChar(100)
+  pincode      String   @db.VarChar(10)
+  totalFlats   Int
+  societyCode  String   @unique @db.VarChar(10) // Residents use this to join
+  logoUrl      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  members       SocietyMember[]
+  complaints    Complaint[]
+  bills         MaintenanceBill[]
+  payments      Payment[]
+  visitors      Visitor[]
+  preApprovals  PreApproval[]
+  announcements Announcement[]
+
+  @@map("societies")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  phone     String   @unique @db.VarChar(15)
+  name      String   @db.VarChar(200)
+  email     String?  @db.VarChar(255)
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships           SocietyMember[]
+  complaintsRaised      Complaint[]         @relation("ComplaintRaisedBy")
+  complaintsAssigned    Complaint[]         @relation("ComplaintAssignedTo")
+  payments              Payment[]
+  visitorApprovals      Visitor[]           @relation("VisitorApprovedBy")
+  visitorGuard          Visitor[]           @relation("VisitorGuard")
+  preApprovals          PreApproval[]
+  announcementsPosted   Announcement[]
+  announcementReads     AnnouncementRead[]
+  refreshTokens         RefreshToken[]
+
+  @@map("users")
+}
+
+// Links a user to a society with a role
+model SocietyMember {
+  id         String       @id @default(uuid())
+  userId     String
+  societyId  String
+  flatNumber String       @db.VarChar(20)
+  role       MemberRole
+  status     MemberStatus @default(pending)
+  joinedAt   DateTime     @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  society Society @relation(fields: [societyId], references: [id])
+
+  @@unique([societyId, flatNumber, userId])
+  @@index([societyId, status])
+  @@map("society_members")
+}
+
+// Persistent refresh tokens — "remember me until app deleted"
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  deviceId  String?  // To support multi-device logout
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Complaint {
+  id             String            @id @default(uuid())
+  societyId      String
+  raisedById     String
+  flatNumber     String            @db.VarChar(20)
+  category       String            @db.VarChar(50)
+  priority       ComplaintPriority @default(medium)
+  title          String            @db.VarChar(300)
+  description    String?
+  photos         String[]          // S3 URLs
+  voiceNoteUrl   String?
+  status         ComplaintStatus   @default(open)
+  assignedToId   String?
+  resolutionNote String?
+  rating         Int?
+  escalatedAt    DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  society    Society  @relation(fields: [societyId], references: [id])
+  raisedBy   User     @relation("ComplaintRaisedBy", fields: [raisedById], references: [id])
+  assignedTo User?    @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+
+  @@index([societyId, status])
+  @@index([societyId, flatNumber])
+  @@map("complaints")
+}
+
+model MaintenanceBill {
+  id          String     @id @default(uuid())
+  societyId   String
+  flatNumber  String     @db.VarChar(20)
+  billMonth   DateTime   // First day of the billing month
+  amount      Decimal    @db.Decimal(10, 2)
+  lateFee     Decimal    @default(0) @db.Decimal(10, 2)
+  totalAmount Decimal    @db.Decimal(10, 2)
+  dueDate     DateTime
+  status      BillStatus @default(unpaid)
+  createdAt   DateTime   @default(now())
+
+  society  Society   @relation(fields: [societyId], references: [id])
+  payments Payment[]
+
+  @@unique([societyId, flatNumber, billMonth])
+  @@index([societyId, billMonth])
+  @@index([societyId, flatNumber, status])
+  @@map("maintenance_bills")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  billId        String?
+  userId        String
+  societyId     String
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentMethod String        @db.VarChar(30) // upi, card, netbanking, cash
+  transactionId String?       @db.VarChar(100) // Razorpay txn ID
+  receiptUrl    String?
+  status        PaymentStatus @default(pending)
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+
+  bill    MaintenanceBill? @relation(fields: [billId], references: [id])
+  user    User             @relation(fields: [userId], references: [id])
+  society Society          @relation(fields: [societyId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("payments")
+}
+
+model Visitor {
+  id            String         @id @default(uuid())
+  societyId     String
+  flatNumber    String         @db.VarChar(20)
+  visitorName   String         @db.VarChar(200)
+  visitorPhone  String?        @db.VarChar(15)
+  visitorPhoto  String?        // S3 URL (auto-deleted after 30 days)
+  purpose       VisitorPurpose
+  companyName   String?        @db.VarChar(100) // Amazon, Swiggy, etc.
+  status        VisitorStatus  @default(pending)
+  approvedById  String?
+  guardId       String?
+  entryTime     DateTime?
+  exitTime      DateTime?
+  createdAt     DateTime       @default(now())
+
+  society    Society @relation(fields: [societyId], references: [id])
+  approvedBy User?   @relation("VisitorApprovedBy", fields: [approvedById], references: [id])
+  guard      User?   @relation("VisitorGuard", fields: [guardId], references: [id])
+
+  @@index([societyId, createdAt])
+  @@index([societyId, flatNumber, status])
+  @@map("visitors")
+}
+
+// Auto-approve rules (e.g., maid Mon–Sat 8–10 AM)
+model PreApproval {
+  id           String   @id @default(uuid())
+  societyId    String
+  userId       String
+  flatNumber   String   @db.VarChar(20)
+  visitorName  String   @db.VarChar(200)
+  visitorPhone String?  @db.VarChar(15)
+  // {"days":["mon","tue","wed"],"start_time":"08:00","end_time":"10:00"}
+  schedule     Json?
+  validFrom    DateTime
+  validUntil   DateTime?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  society Society @relation(fields: [societyId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@map("pre_approvals")
+}
+
+model Announcement {
+  id          String               @id @default(uuid())
+  societyId   String
+  postedById  String
+  title       String               @db.VarChar(300)
+  body        String
+  category    AnnouncementCategory @default(general)
+  priority    AnnouncementPriority @default(normal)
+  attachments String[]
+  isPinned    Boolean              @default(false)
+  createdAt   DateTime             @default(now())
+
+  society   Society            @relation(fields: [societyId], references: [id])
+  postedBy  User               @relation(fields: [postedById], references: [id])
+  reads     AnnouncementRead[]
+
+  @@index([societyId, createdAt])
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id             String   @id @default(uuid())
+  announcementId String
+  userId         String
+  readAt         DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([announcementId, userId])
+  @@map("announcement_reads")
+}
