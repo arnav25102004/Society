@@ -110,13 +110,14 @@ model Society {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  phone     String   @unique @db.VarChar(15)
-  name      String   @db.VarChar(200)
-  email     String?  @db.VarChar(255)
-  avatarUrl String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(uuid())
+  phone          String   @unique @db.VarChar(15)
+  name           String   @db.VarChar(200)
+  email          String?  @db.VarChar(255)
+  avatarUrl      String?
+  expoPushToken  String?  // Expo push token for FCM notifications
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   memberships           SocietyMember[]
   complaintsRaised      Complaint[]         @relation("ComplaintRaisedBy")
