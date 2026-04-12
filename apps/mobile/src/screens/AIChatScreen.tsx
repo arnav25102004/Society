@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
 
 import { Colors, Spacing, Radius, FontSizes } from '../theme';
 import { useAuthStore } from '../store/authStore';
@@ -44,11 +43,8 @@ export function AIChatScreen({ navigation }: any) {
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || !activeMembership) return;
-    Haptics.selectionAsync();
-
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text.trim() };
     const loadingMsg: Message = { id: 'loading', role: 'assistant', content: '', isLoading: true };
-
     setMessages(prev => [...prev, userMsg, loadingMsg]);
     setInput('');
     setIsTyping(true);
