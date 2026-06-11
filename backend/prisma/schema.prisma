@@ -83,6 +83,36 @@ enum AnnouncementPriority {
   urgent
 }
 
+enum ListingStatus {
+  available
+  reserved
+  sold
+}
+
+enum ListingCategory {
+  electronics
+  furniture
+  appliances
+  clothing
+  books
+  vehicles
+  sports
+  kids
+  other
+}
+
+enum BookingStatus {
+  pending
+  confirmed
+  cancelled
+  completed
+}
+
+enum SosStatus {
+  active
+  resolved
+}
+
 // ─── Models ──────────────────────────────────────────────────────────────────
 
 model Society {
@@ -93,18 +123,23 @@ model Society {
   state        String   @db.VarChar(100)
   pincode      String   @db.VarChar(10)
   totalFlats   Int
-  societyCode  String   @unique @db.VarChar(10) // Residents use this to join
+  societyCode  String   @unique @db.VarChar(10)
   logoUrl      String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  members       SocietyMember[]
-  complaints    Complaint[]
-  bills         MaintenanceBill[]
-  payments      Payment[]
-  visitors      Visitor[]
-  preApprovals  PreApproval[]
-  announcements Announcement[]
+  members            SocietyMember[]
+  complaints         Complaint[]
+  bills              MaintenanceBill[]
+  payments           Payment[]
+  visitors           Visitor[]
+  preApprovals       PreApproval[]
+  announcements      Announcement[]
+  marketplaceListings MarketplaceListing[]
+  amenities          Amenity[]
+  sosAlerts          SosAlert[]
+  expenseCategories  ExpenseCategory[]
+  expenses           Expense[]
 
   @@map("societies")
 }
@@ -115,25 +150,30 @@ model User {
   name           String   @db.VarChar(200)
   email          String?  @db.VarChar(255)
   avatarUrl      String?
-  expoPushToken  String?  // Expo push token for FCM notifications
+  expoPushToken  String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   memberships           SocietyMember[]
-  complaintsRaised      Complaint[]         @relation("ComplaintRaisedBy")
-  complaintsAssigned    Complaint[]         @relation("ComplaintAssignedTo")
+  complaintsRaised      Complaint[]           @relation("ComplaintRaisedBy")
+  complaintsAssigned    Complaint[]           @relation("ComplaintAssignedTo")
   payments              Payment[]
-  visitorApprovals      Visitor[]           @relation("VisitorApprovedBy")
-  visitorGuard          Visitor[]           @relation("VisitorGuard")
+  visitorApprovals      Visitor[]             @relation("VisitorApprovedBy")
+  visitorGuard          Visitor[]             @relation("VisitorGuard")
   preApprovals          PreApproval[]
   announcementsPosted   Announcement[]
   announcementReads     AnnouncementRead[]
   refreshTokens         RefreshToken[]
+  marketplaceListings   MarketplaceListing[]
+  listingInterests      ListingInterest[]
+  amenityBookings       AmenityBooking[]
+  sosAlerts             SosAlert[]            @relation("SosRaisedBy")
+  sosResponses          SosAlert[]            @relation("SosRespondedBy")
+  expensesCreated       Expense[]
 
   @@map("users")
 }
 
-// Links a user to a society with a role
 model SocietyMember {
   id         String       @id @default(uuid())
   userId     String
@@ -151,12 +191,11 @@ model SocietyMember {
   @@map("society_members")
 }
 
-// Persistent refresh tokens — "remember me until app deleted"
 model RefreshToken {
   id        String   @id @default(uuid())
   userId    String
   token     String   @unique
-  deviceId  String?  // To support multi-device logout
+  deviceId  String?
   expiresAt DateTime
   createdAt DateTime @default(now())
 
@@ -175,7 +214,7 @@ model Complaint {
   priority       ComplaintPriority @default(medium)
   title          String            @db.VarChar(300)
   description    String?
-  photos         String[]          // S3 URLs
+  photos         String[]
   voiceNoteUrl   String?
   status         ComplaintStatus   @default(open)
   assignedToId   String?
@@ -199,12 +238,13 @@ model MaintenanceBill {
   id          String     @id @default(uuid())
   societyId   String
   flatNumber  String     @db.VarChar(20)
-  billMonth   DateTime   // First day of the billing month
+  billMonth   DateTime
   amount      Decimal    @db.Decimal(10, 2)
   lateFee     Decimal    @default(0) @db.Decimal(10, 2)
   totalAmount Decimal    @db.Decimal(10, 2)
   dueDate     DateTime
   status      BillStatus @default(unpaid)
+  notes       String?
   createdAt   DateTime   @default(now())
 
   society  Society   @relation(fields: [societyId], references: [id])
@@ -222,8 +262,8 @@ model Payment {
   userId        String
   societyId     String
   amount        Decimal       @db.Decimal(10, 2)
-  paymentMethod String        @db.VarChar(30) // upi, card, netbanking, cash
-  transactionId String?       @db.VarChar(100) // Razorpay txn ID
+  paymentMethod String        @db.VarChar(30)
+  transactionId String?       @db.VarChar(100)
   receiptUrl    String?
   status        PaymentStatus @default(pending)
   paidAt        DateTime?
@@ -243,9 +283,9 @@ model Visitor {
   flatNumber    String         @db.VarChar(20)
   visitorName   String         @db.VarChar(200)
   visitorPhone  String?        @db.VarChar(15)
-  visitorPhoto  String?        // S3 URL (auto-deleted after 30 days)
+  visitorPhoto  String?
   purpose       VisitorPurpose
-  companyName   String?        @db.VarChar(100) // Amazon, Swiggy, etc.
+  companyName   String?        @db.VarChar(100)
   status        VisitorStatus  @default(pending)
   approvedById  String?
   guardId       String?
@@ -262,7 +302,6 @@ model Visitor {
   @@map("visitors")
 }
 
-// Auto-approve rules (e.g., maid Mon–Sat 8–10 AM)
 model PreApproval {
   id           String   @id @default(uuid())
   societyId    String
@@ -270,7 +309,6 @@ model PreApproval {
   flatNumber   String   @db.VarChar(20)
   visitorName  String   @db.VarChar(200)
   visitorPhone String?  @db.VarChar(15)
-  // {"days":["mon","tue","wed"],"start_time":"08:00","end_time":"10:00"}
   schedule     Json?
   validFrom    DateTime
   validUntil   DateTime?
@@ -314,4 +352,146 @@ model AnnouncementRead {
 
   @@unique([announcementId, userId])
   @@map("announcement_reads")
+}
+
+// ─── Marketplace ─────────────────────────────────────────────────────────────
+
+model MarketplaceListing {
+  id          String          @id @default(uuid())
+  societyId   String
+  userId      String
+  title       String          @db.VarChar(200)
+  description String?
+  price       Decimal?        @db.Decimal(10, 2)
+  isGiveaway  Boolean         @default(false)
+  category    ListingCategory @default(other)
+  photos      String[]
+  status      ListingStatus   @default(available)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  society   Society           @relation(fields: [societyId], references: [id])
+  seller    User              @relation(fields: [userId], references: [id])
+  interests ListingInterest[]
+
+  @@index([societyId, status])
+  @@index([societyId, category])
+  @@map("marketplace_listings")
+}
+
+model ListingInterest {
+  id        String   @id @default(uuid())
+  listingId String
+  userId    String
+  message   String?
+  createdAt DateTime @default(now())
+
+  listing MarketplaceListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  user    User               @relation(fields: [userId], references: [id])
+
+  @@unique([listingId, userId])
+  @@map("listing_interests")
+}
+
+// ─── Amenities ───────────────────────────────────────────────────────────────
+
+model Amenity {
+  id                String   @id @default(uuid())
+  societyId         String
+  name              String   @db.VarChar(100)
+  description       String?
+  photoUrl          String?
+  maxCapacity       Int      @default(1)
+  openTime          String   @db.VarChar(5)  // "06:00"
+  closeTime         String   @db.VarChar(5)  // "22:00"
+  slotDurationMins  Int      @default(60)
+  bookingAdvanceDays Int     @default(7)
+  depositAmount     Decimal? @db.Decimal(10, 2)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+
+  society  Society          @relation(fields: [societyId], references: [id])
+  bookings AmenityBooking[]
+
+  @@index([societyId, isActive])
+  @@map("amenities")
+}
+
+model AmenityBooking {
+  id         String        @id @default(uuid())
+  amenityId  String
+  userId     String
+  societyId  String
+  bookDate   DateTime      @db.Date
+  startTime  String        @db.VarChar(5)  // "10:00"
+  endTime    String        @db.VarChar(5)  // "11:00"
+  guests     Int           @default(1)
+  notes      String?
+  status     BookingStatus @default(confirmed)
+  cancelledAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  amenity Amenity @relation(fields: [amenityId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([amenityId, bookDate])
+  @@index([userId, bookDate])
+  @@map("amenity_bookings")
+}
+
+// ─── Emergency SOS ───────────────────────────────────────────────────────────
+
+model SosAlert {
+  id           String    @id @default(uuid())
+  societyId    String
+  userId       String
+  flatNumber   String    @db.VarChar(20)
+  message      String?   @db.VarChar(500)
+  status       SosStatus @default(active)
+  respondedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  society     Society @relation(fields: [societyId], references: [id])
+  raisedBy    User    @relation("SosRaisedBy", fields: [userId], references: [id])
+  respondedBy User?   @relation("SosRespondedBy", fields: [respondedById], references: [id])
+
+  @@index([societyId, status])
+  @@map("sos_alerts")
+}
+
+// ─── Expense Transparency ────────────────────────────────────────────────────
+
+model ExpenseCategory {
+  id           String   @id @default(uuid())
+  societyId    String
+  name         String   @db.VarChar(100)
+  color        String   @db.VarChar(7)   // "#FF5733"
+  budgetAmount Decimal  @db.Decimal(10, 2)
+  createdAt    DateTime @default(now())
+
+  society  Society   @relation(fields: [societyId], references: [id])
+  expenses Expense[]
+
+  @@unique([societyId, name])
+  @@map("expense_categories")
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  societyId   String
+  categoryId  String
+  amount      Decimal  @db.Decimal(10, 2)
+  description String   @db.VarChar(500)
+  receiptUrl  String?
+  expenseMonth DateTime // First day of month
+  createdById String
+  createdAt   DateTime @default(now())
+
+  society   Society         @relation(fields: [societyId], references: [id])
+  category  ExpenseCategory @relation(fields: [categoryId], references: [id])
+  createdBy User            @relation(fields: [createdById], references: [id])
+
+  @@index([societyId, expenseMonth])
+  @@map("expenses")
 }

@@ -102,7 +102,7 @@ const REASONING_TEMPLATES: Record<Priority, (cat: Category, text: string) => str
   critical: (cat) => `Classified as CRITICAL — ${cat === 'elevator' ? 'person may be trapped' : cat === 'plumbing' ? 'water damage risk to property and electrical systems' : 'immediate safety risk detected'}. SLA: 4 hours.`,
   high: (cat) => `Classified as HIGH — ${cat === 'pest' ? 'health hazard requiring urgent treatment' : cat === 'security' ? 'security threat to residents' : 'affects resident quality of life significantly'}. SLA: 24 hours.`,
   medium: () => `Classified as MEDIUM — functional issue that needs resolution but is not an immediate hazard. SLA: 72 hours.`,
-  low: () => `Classified as LOW — cosmetic or minor issue. Can be scheduled at committee's convenience. SLA: 7 days.`,
+  low: () => `Classified as LOW — cosmetic or minor issue. Can be scheduled at committee convenience. SLA: 7 days.`,
 };
 
 function mockTriage(title: string, description: string): TriageResult {
@@ -137,12 +137,12 @@ function mockDraftResponse(
 
   const body = `Hi ${firstName},
 
-Thank you for reporting this issue. We've received your complaint about "${complaintTitle}" from Flat ${flatNumber}.
+Thank you for reporting this issue. We have received your complaint about "${complaintTitle}" from Flat ${flatNumber}.
 
 ${urgencyPhrase}
 
 What happens next:
-• You'll receive a notification when a technician is assigned
+• You will receive a notification when a technician is assigned
 • You can track the live status of your complaint in the SocietyHub app
 • Expected resolution: within ${triage.estimatedResolutionHours} hours
 
@@ -274,7 +274,7 @@ Answer helpfully and concisely. If you don't know something specific, say so hon
 
   if (!response.ok) throw new Error(`Gemini API error: ${response.statusText}`);
   const data = await response.json() as any;
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? 'I'm having trouble right now. Please try again.';
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "I'm having trouble right now. Please try again.";
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -319,13 +319,13 @@ export const aiService = {
     if (last.includes('due') || last.includes('payment') || last.includes('maintenance')) {
       return context.pendingDues > 0
         ? `You have ₹${context.pendingDues} pending dues. Tap "Pay" on the home screen to pay instantly.`
-        : `You have no pending dues! You're all clear.`;
+        : `You have no pending dues! All clear.`;
     }
     if (last.includes('complaint') || last.includes('status')) {
       return context.openComplaints.length > 0
         ? `You have ${context.openComplaints.length} open complaint(s): ${context.openComplaints[0].title} is currently ${context.openComplaints[0].status}.`
         : `You have no open complaints. 🎉`;
     }
-    return `I'm SocietyBot for ${context.societyName}! I can help you check your dues, complaint status, or society announcements. What would you like to know?`;
+    return `I am SocietyBot for ${context.societyName}! I can help you check your dues, complaint status, or society announcements. What would you like to know?`;
   },
 };
