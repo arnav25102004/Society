@@ -36,9 +36,12 @@ export const env = {
   },
 
   otp: {
-    // 'console' = OTP printed to terminal. No SMS service needed in dev.
-    provider: (process.env.OTP_PROVIDER ?? 'console') as 'console' | 'msg91',
+    // 'console'   = OTP printed to terminal (dev only, never in production)
+    // 'fast2sms'  = free Indian SMS — signup at fast2sms.com, no DLT needed
+    // 'msg91'     = paid Indian SMS (₹0.28/SMS), needs DLT template ID
+    provider: (process.env.OTP_PROVIDER ?? 'console') as 'console' | 'fast2sms' | 'msg91',
     expirySeconds: parseInt(process.env.OTP_EXPIRY_SECONDS ?? '600', 10),
+    fast2smsApiKey: process.env.FAST2SMS_API_KEY ?? '',
     msg91AuthKey: process.env.MSG91_AUTH_KEY ?? '',
     msg91TemplateId: process.env.MSG91_TEMPLATE_ID ?? '',
   },
@@ -48,9 +51,14 @@ export const env = {
     provider: (process.env.STORAGE_PROVIDER ?? 'local') as 'local' | 's3',
     localUploadDir: process.env.LOCAL_UPLOAD_DIR ?? './uploads',
     s3Bucket: process.env.S3_BUCKET ?? '',
-    s3Region: process.env.S3_REGION ?? 'ap-south-1',
+    s3Region: process.env.S3_REGION ?? 'auto',
     awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? '',
     awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
+    // For Cloudflare R2: set S3_ENDPOINT=https://<accountid>.r2.cloudflarestorage.com
+    // For standard AWS S3: leave empty
+    s3Endpoint: process.env.S3_ENDPOINT ?? '',
+    // Public base URL for serving files (R2 public bucket URL or CloudFront)
+    s3PublicUrl: process.env.S3_PUBLIC_URL ?? '',
   },
 
   // AI: uses Google Gemini (has free tier). Falls back to 'mock' in dev if no key set.
