@@ -13,6 +13,13 @@ import { prisma } from './config/db';
 import { authRouter } from './routes/auth';
 import { societiesRouter } from './routes/societies';
 import { complaintsRouter } from './routes/complaints';
+import { paymentsRouter } from './routes/payments';
+import { visitorsRouter } from './routes/visitors';
+import { announcementsRouter } from './routes/announcements';
+import { marketplaceRouter } from './routes/marketplace';
+import { amenitiesRouter } from './routes/amenities';
+import { sosRouter } from './routes/sos';
+import { expensesRouter } from './routes/expenses';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
@@ -40,6 +47,13 @@ app.get('/health', (_req, res) => {
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/societies', societiesRouter);
 app.use('/api/v1/complaints', complaintsRouter);
+app.use('/api/v1/payments', paymentsRouter);
+app.use('/api/v1/visitors', visitorsRouter);
+app.use('/api/v1/announcements', announcementsRouter);
+app.use('/api/v1/marketplace', marketplaceRouter);
+app.use('/api/v1/amenities', amenitiesRouter);
+app.use('/api/v1/sos', sosRouter);
+app.use('/api/v1/expenses', expensesRouter);
 
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {
