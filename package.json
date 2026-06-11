@@ -2,15 +2,11 @@
   "name": "societyhub",
   "version": "1.0.0",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "backend"
-  ],
   "scripts": {
-    "backend": "npm --workspace=backend run dev",
-    "mobile": "npm --workspace=apps/mobile run start",
-    "db:up": "docker-compose up -d",
-    "db:down": "docker-compose down",
-    "db:reset": "docker-compose down -v && docker-compose up -d"
+    "backend": "cd backend && npm run dev",
+    "mobile": "cd apps/mobile && npx expo start",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d"
   }
 }
