@@ -7,6 +7,7 @@ import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../config/db';
 import { aiService, Priority } from '../services/ai.service';
 import { storageService } from '../services/storage.service';
+import { notificationService } from '../services/notification.service';
 
 export const complaintsRouter = Router();
 complaintsRouter.use(requireAuth);
@@ -103,8 +104,23 @@ complaintsRouter.post(
       title
     );
 
-    // TODO: Push notification to committee members (Phase 1.5 — FCM)
-    // TODO: If CRITICAL → also notify chairman directly
+    // Push notification to all committee/admin members
+    const committeeMembers = await prisma.societyMember.findMany({
+      where: { societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
+      include: { user: { select: { expoPushToken: true } } },
+    });
+    const committeeTokens = committeeMembers
+      .map((m) => m.user.expoPushToken)
+      .filter((t): t is string => !!t);
+
+    notificationService.newComplaint({
+      committeeTokens,
+      flatNumber: member.flatNumber,
+      societyName: society?.name ?? 'Society',
+      complaintTitle: title,
+      complaintId: complaint.id,
+      priority: triage.priority,
+    });
 
     res.status(201).json({
       success: true,
@@ -224,7 +240,20 @@ complaintsRouter.put('/:id/status', validate(updateStatusSchema), async (req: Re
     },
   });
 
-  // TODO: Push notification to resident (FCM)
+  // Notify resident of status change
+  const residentUser = await prisma.user.findUnique({
+    where: { id: complaint.raisedById },
+    select: { expoPushToken: true },
+  });
+  if (residentUser?.expoPushToken) {
+    notificationService.complaintStatusUpdate({
+      residentToken: residentUser.expoPushToken,
+      complaintTitle: complaint.title,
+      complaintId: complaint.id,
+      newStatus: status,
+      resolutionNote,
+    });
+  }
 
   res.json({ success: true, complaint: updated });
 });

@@ -140,6 +140,19 @@ authRouter.delete('/logout', requireAuth, validate(refreshSchema), async (req: R
   res.json({ success: true, message: 'Logged out' });
 });
 
+// ─── PUT /auth/push-token — Register Expo push token ─────────────────────────
+
+const pushTokenSchema = z.object({
+  expoPushToken: z.string().startsWith('ExponentPushToken[').endsWith(']'),
+});
+
+authRouter.put('/push-token', requireAuth, validate(pushTokenSchema), async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const { expoPushToken } = req.body as z.infer<typeof pushTokenSchema>;
+  await prisma.user.update({ where: { id: userId }, data: { expoPushToken } });
+  res.json({ success: true });
+});
+
 // ─── GET /auth/me ─────────────────────────────────────────────────────────────
 
 authRouter.get('/me', requireAuth, async (req: Request, res: Response) => {
