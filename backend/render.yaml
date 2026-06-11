@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: societyhub-backend
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build && npx prisma generate
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: OTP_PROVIDER
+        value: fast2sms
+      - key: FAST2SMS_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        value: "*"
