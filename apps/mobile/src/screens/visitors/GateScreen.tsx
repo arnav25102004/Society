@@ -29,18 +29,20 @@ export function GateScreen({ navigation }: any) {
   const [visitors, setVisitors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [selectedVisitor, setSelectedVisitor] = useState<any>(null);
   const [actionLoading, setActionLoading] = useState(false);
-
-  const loadVisitors = useCallback(async () => {
+  const loadVisitors = useCallback(async (showAlertOnFail = false) => {
     if (!activeMembership?.societyId) return;
     try {
       const res = await api.get('/visitors', {
         params: { societyId: activeMembership.societyId },
       });
       setVisitors(res.data.visitors);
+      setLoadError(false);
     } catch {
-      Alert.alert('Error', 'Could not load visitors.');
+      if (showAlertOnFail) setLoadError(true);
+      // Polling failures are silent — no Alert spam every 10s
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -48,10 +50,9 @@ export function GateScreen({ navigation }: any) {
   }, [activeMembership?.societyId]);
 
   useEffect(() => {
-    loadVisitors();
-    // Poll every 10 seconds for pending visitors
+    loadVisitors(true); // Show error state on first load
     const interval = setInterval(() => {
-      loadVisitors();
+      loadVisitors(false); // Silent on polls
     }, 10000);
     return () => clearInterval(interval);
   }, [loadVisitors]);
@@ -89,6 +90,19 @@ export function GateScreen({ navigation }: any) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={styles.center}>
+        <MaterialCommunityIcons name="wifi-off" size={48} color={Colors.textDisabled} />
+        <Text style={styles.errorText}>Could not load visitors</Text>
+        <Text style={styles.errorHint}>Check your connection and backend is running</Text>
+        <Pressable style={styles.retryBtn} onPress={() => { setLoading(true); setLoadError(false); loadVisitors(true); }}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </Pressable>
       </View>
     );
   }
@@ -252,6 +266,10 @@ const styles = StyleSheet.create({
   },
   emptyState: { alignItems: 'center', paddingVertical: 60, gap: Spacing.md },
   emptyText: { color: Colors.textDisabled, fontSize: FontSizes.md },
+  errorText: { fontSize: FontSizes.md, fontWeight: '700', color: Colors.textSecondary, marginTop: Spacing.md },
+  errorHint: { fontSize: FontSizes.sm, color: Colors.textDisabled, textAlign: 'center', marginHorizontal: Spacing.xl },
+  retryBtn: { marginTop: Spacing.md, backgroundColor: Colors.primary, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.md },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24,

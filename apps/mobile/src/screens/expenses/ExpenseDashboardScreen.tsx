@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable,
-  ActivityIndicator, Alert, RefreshControl,
+  ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
@@ -13,6 +13,7 @@ export function ExpenseDashboardScreen({ navigation }: any) {
   const [dashboard, setDashboard] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
 
   const loadDashboard = useCallback(async () => {
@@ -22,8 +23,9 @@ export function ExpenseDashboardScreen({ navigation }: any) {
         params: { societyId: activeMembership.societyId, month: selectedMonth },
       });
       setDashboard(res.data);
+      setLoadError(false);
     } catch {
-      Alert.alert('Error', 'Could not load expense data.');
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -36,7 +38,18 @@ export function ExpenseDashboardScreen({ navigation }: any) {
     return <View style={styles.center}><ActivityIndicator size="large" color={Colors.primary} /></View>;
   }
 
-  if (!dashboard) return null;
+  if (loadError || !dashboard) {
+    return (
+      <View style={styles.center}>
+        <MaterialCommunityIcons name="chart-pie-outline" size={48} color={Colors.textDisabled} />
+        <Text style={styles.errorText}>Could not load expense data</Text>
+        <Text style={styles.errorHint}>The backend may not be running, or no data exists yet</Text>
+        <Pressable style={styles.retryBtn} onPress={() => { setLoading(true); setLoadError(false); loadDashboard(); }}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   const { summary, breakdown, trend } = dashboard;
   const maxTrend = Math.max(...trend.map((t: any) => t.amount), 1);
@@ -213,4 +226,8 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 40, gap: Spacing.sm, paddingHorizontal: Spacing.lg },
   emptyText: { color: Colors.textSecondary, fontWeight: '600', fontSize: FontSizes.md },
   emptyHint: { color: Colors.textDisabled, fontSize: FontSizes.sm, textAlign: 'center' },
+  errorText: { fontSize: FontSizes.md, fontWeight: '700', color: Colors.textSecondary, marginTop: Spacing.md },
+  errorHint: { fontSize: FontSizes.sm, color: Colors.textDisabled, textAlign: 'center', marginHorizontal: Spacing.xl, marginTop: 4 },
+  retryBtn: { marginTop: Spacing.md, backgroundColor: Colors.primary, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.md },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
 });
