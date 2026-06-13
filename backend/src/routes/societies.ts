@@ -116,17 +116,22 @@ societiesRouter.post('/join', validate(joinSocietySchema), async (req: Request, 
     return res.status(404).json({ success: false, message: 'Society not found. Check the code.' });
   }
 
-  // Check if already a member
+  // If already a member, return the existing record so the app can route correctly
   const existing = await prisma.societyMember.findFirst({
     where: { userId, societyId: society.id },
   });
   if (existing) {
-    return res.status(409).json({
-      success: false,
-      message:
-        existing.status === 'pending'
-          ? 'Your request is pending committee approval.'
-          : 'You are already a member of this society.',
+    return res.json({
+      success: true,
+      alreadyMember: true,
+      member: {
+        id: existing.id,
+        societyId: society.id,
+        societyName: society.name,
+        flatNumber: existing.flatNumber,
+        role: existing.role,
+        status: existing.status,
+      },
     });
   }
 
