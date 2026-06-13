@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Alert, ScrollView, Modal,
+  ActivityIndicator, Alert, ScrollView, Modal, RefreshControl,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
@@ -24,6 +24,7 @@ export function AmenityBookingScreen({ navigation }: any) {
   const [amenities, setAmenities] = useState<any[]>([]);
   const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [selectedAmenity, setSelectedAmenity] = useState<any>(null);
   const [selectedDate, setSelectedDate] = useState<string>(getTodayStr());
   const [slots, setSlots] = useState<any[]>([]);
@@ -41,7 +42,7 @@ export function AmenityBookingScreen({ navigation }: any) {
       setAmenities(amenRes.data.amenities);
       setBookings(bookRes.data.bookings);
     } catch {
-      Alert.alert('Error', 'Could not load amenities.');
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -99,6 +100,18 @@ export function AmenityBookingScreen({ navigation }: any) {
 
   if (loading) {
     return <View style={styles.center}><ActivityIndicator size="large" color={Colors.primary} /></View>;
+  }
+
+  if (loadError) {
+    return (
+      <View style={styles.center}>
+        <MaterialCommunityIcons name="calendar-blank-outline" size={48} color={Colors.textDisabled} />
+        <Text style={styles.errorText}>Could not load amenities</Text>
+        <Pressable style={styles.retryBtn} onPress={() => { setLoading(true); setLoadError(false); load(); }}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
   }
 
   return (
@@ -302,6 +315,9 @@ const styles = StyleSheet.create({
   cancelledTag: { color: Colors.textDisabled, fontWeight: '600', fontSize: FontSizes.xs },
   emptyState: { alignItems: 'center', paddingVertical: 60, gap: Spacing.md },
   emptyText: { color: Colors.textDisabled, fontSize: FontSizes.md },
+  errorText: { fontSize: FontSizes.md, fontWeight: '700', color: Colors.textSecondary, marginTop: Spacing.md },
+  retryBtn: { marginTop: Spacing.md, backgroundColor: Colors.primary, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.md },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: Colors.overlay, justifyContent: 'flex-end' },
   modalSheet: { backgroundColor: Colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: Spacing.lg, paddingBottom: 40, maxHeight: '80%' },
   modalHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: Colors.border, alignSelf: 'center', marginBottom: Spacing.md },

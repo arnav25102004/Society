@@ -70,9 +70,9 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
     });
   }
 
-  // Check if user is already in any approved society
+  // Return all memberships (approved + pending) so the app can route correctly
   const memberships = await prisma.societyMember.findMany({
-    where: { userId: user.id, status: 'approved' },
+    where: { userId: user.id },
     include: { society: { select: { id: true, name: true, city: true } } },
   });
 

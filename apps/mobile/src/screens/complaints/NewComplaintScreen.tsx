@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, Pressable, ScrollView, Alert, KeyboardAvoidingView, Platform, ActivityIndicator } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
@@ -20,6 +21,7 @@ const PRIORITY_COLORS: Record<string, string> = { critical: Colors.error, high: 
 
 export function NewComplaintScreen({ navigation }: any) {
   const { activeMembership } = useAuthStore();
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<'category' | 'details' | 'result'>('category');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [title, setTitle] = useState('');
@@ -68,7 +70,7 @@ export function NewComplaintScreen({ navigation }: any) {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <StatusBar style="dark" />
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
         <Pressable onPress={() => step === 'details' ? setStep('category') : navigation.goBack()}><Text style={styles.backText}>← Back</Text></Pressable>
         <Text style={styles.headerTitle}>New Complaint</Text>
         <Text style={styles.stepIndicator}>{step === 'category' ? '1/2' : '2/2'}</Text>
@@ -111,7 +113,7 @@ export function NewComplaintScreen({ navigation }: any) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: Spacing.lg, paddingTop: 56 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: Spacing.lg },
   backText: { fontSize: FontSizes.md, color: Colors.primary, fontWeight: '600' },
   headerTitle: { fontSize: FontSizes.lg, fontWeight: '800', color: Colors.textPrimary },
   stepIndicator: { fontSize: FontSizes.sm, color: Colors.textSecondary },

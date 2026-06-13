@@ -43,7 +43,15 @@ export function OTPScreen({ route, navigation }: Props) {
     try {
       const { data } = await authApi.verifyOtp(phone, otp);
       await setSession(data.user, data.tokens, data.memberships);
-      if (data.isNewUser || data.memberships.length === 0) navigation.navigate('SocietySelect');
+      if (data.memberships.length === 0) {
+        navigation.navigate('SocietySelect');
+      } else {
+        const pending = data.memberships.find((m: any) => m.status === 'pending');
+        if (pending) {
+          navigation.navigate('PendingApproval', { societyName: pending.societyName, flatNumber: pending.flatNumber });
+        }
+        // approved membership → RootNavigator auto-shows the main app
+      }
     } catch (err: any) {
       Alert.alert('Incorrect OTP', err?.response?.data?.message ?? 'Please try again.');
       setOtp(''); inputRef.current?.focus();

@@ -45,106 +45,121 @@ complaintsRouter.post(
   '/',
   upload.array('photos', 5),
   async (req: Request, res: Response) => {
-    const { userId } = (req as AuthenticatedRequest).user;
-    const body = createSchema.safeParse(req.body);
-    if (!body.success) {
-      return res.status(400).json({ success: false, message: 'Validation failed', errors: body.error.errors });
-    }
-    const { societyId, title, description } = body.data;
-
-    // Verify membership
-    const member = await prisma.societyMember.findFirst({
-      where: { userId, societyId, status: 'approved' },
-    });
-    if (!member) return res.status(403).json({ success: false, message: 'Not an approved member' });
-
-    // Upload photos to local storage (or S3 in prod)
-    const files = req.files as Express.Multer.File[] | undefined;
-    const photoUrls: string[] = [];
-    if (files?.length) {
-      for (const file of files) {
-        const url = await storageService.save(file.originalname, file.buffer, file.mimetype);
-        photoUrls.push(url);
+    try {
+      const { userId } = (req as AuthenticatedRequest).user;
+      const body = createSchema.safeParse(req.body);
+      if (!body.success) {
+        return res.status(400).json({ success: false, message: 'Validation failed', errors: body.error.errors });
       }
-    }
+      const { societyId, title, description } = body.data;
 
-    // 🤖 AI Triage — runs in parallel with DB write for speed
-    const [triage, user, society] = await Promise.all([
-      aiService.triageComplaint(title, description ?? ''),
-      prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
-      prisma.society.findUnique({ where: { id: societyId }, select: { name: true } }),
-    ]);
+      // Verify membership
+      const member = await prisma.societyMember.findFirst({
+        where: { userId, societyId, status: 'approved' },
+      });
+      if (!member) return res.status(403).json({ success: false, message: 'Not an approved member' });
 
-    // Create complaint with AI-assigned priority and category
-    const complaint = await prisma.complaint.create({
-      data: {
-        societyId,
-        raisedById: userId,
-        flatNumber: member.flatNumber,
-        title,
-        description,
-        photos: photoUrls,
-        category: triage.category,
-        priority: triage.priority as any,
-        status: 'open',
-        // Store AI reasoning in resolution note temporarily (until committee assigns)
-        resolutionNote: undefined,
-      },
-      include: {
-        raisedBy: { select: { name: true, phone: true } },
-      },
-    });
+      // Upload photos to local storage (or S3 in prod)
+      const files = req.files as Express.Multer.File[] | undefined;
+      const photoUrls: string[] = [];
+      if (files?.length) {
+        for (const file of files) {
+          const url = await storageService.save(file.originalname, file.buffer, file.mimetype);
+          photoUrls.push(url);
+        }
+      }
 
-    // 🤖 AI drafts committee response immediately
-    const draftResponse = await aiService.draftCommitteeResponse(
-      user?.name ?? 'Resident',
-      member.flatNumber,
-      society?.name ?? 'Society',
-      triage,
-      title
-    );
+      // AI Triage — runs in parallel with DB reads; never blocks complaint creation
+      let triage;
+      let user;
+      let society;
+      try {
+        [triage, user, society] = await Promise.all([
+          aiService.triageComplaint(title, description ?? ''),
+          prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+          prisma.society.findUnique({ where: { id: societyId }, select: { name: true } }),
+        ]);
+      } catch (aiErr) {
+        console.error('[complaints] AI/DB lookup failed, using defaults:', aiErr);
+        triage = { priority: 'medium', category: 'other', confidence: 0, reasoning: 'Auto-classified', suggestedTitle: title, estimatedResolutionHours: 72, isEmergency: false };
+        user = null;
+        society = null;
+      }
 
-    // Push notification to all committee/admin members
-    const committeeMembers = await prisma.societyMember.findMany({
-      where: { societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
-      include: { user: { select: { expoPushToken: true } } },
-    });
-    const committeeTokens = committeeMembers
-      .map((m) => m.user.expoPushToken)
-      .filter((t): t is string => !!t);
-
-    notificationService.newComplaint({
-      committeeTokens,
-      flatNumber: member.flatNumber,
-      societyName: society?.name ?? 'Society',
-      complaintTitle: title,
-      complaintId: complaint.id,
-      priority: triage.priority,
-    });
-
-    res.status(201).json({
-      success: true,
-      complaint: {
-        id: complaint.id,
-        title: complaint.title,
-        status: complaint.status,
-        priority: complaint.priority,
-        category: complaint.category,
-        photos: complaint.photos,
-        createdAt: complaint.createdAt,
-      },
-      ai: {
-        triage: {
-          priority: triage.priority,
-          category: triage.category,
-          reasoning: triage.reasoning,
-          estimatedResolutionHours: triage.estimatedResolutionHours,
-          isEmergency: triage.isEmergency,
+      // Create complaint with AI-assigned priority and category
+      const complaint = await prisma.complaint.create({
+        data: {
+          societyId,
+          raisedById: userId,
+          flatNumber: member.flatNumber,
+          title,
+          description,
+          photos: photoUrls,
+          category: (triage as any).category,
+          priority: (triage as any).priority,
+          status: 'open',
         },
-        // Draft response shown to resident as an "immediate acknowledgement"
-        acknowledgement: draftResponse.body,
-      },
-    });
+        include: {
+          raisedBy: { select: { name: true, phone: true } },
+        },
+      });
+
+      // AI drafts acknowledgement — failure here must not block the response
+      let draftResponse;
+      try {
+        draftResponse = await aiService.draftCommitteeResponse(
+          (user as any)?.name ?? 'Resident',
+          member.flatNumber,
+          (society as any)?.name ?? 'Society',
+          triage as any,
+          title
+        );
+      } catch {
+        draftResponse = { body: 'Your complaint has been received. The committee will respond shortly.' };
+      }
+
+      // Push notification to committee — fire-and-forget, failure must not block
+      prisma.societyMember.findMany({
+        where: { societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
+        include: { user: { select: { expoPushToken: true } } },
+      }).then((committeeMembers) => {
+        const committeeTokens = committeeMembers.map((m) => m.user.expoPushToken).filter((t): t is string => !!t);
+        notificationService.newComplaint({
+          committeeTokens,
+          flatNumber: member.flatNumber,
+          societyName: (society as any)?.name ?? 'Society',
+          complaintTitle: title,
+          complaintId: complaint.id,
+          priority: (triage as any).priority,
+        });
+      }).catch((err) => console.error('[complaints] Notification failed:', err));
+
+      return res.status(201).json({
+        success: true,
+        complaint: {
+          id: complaint.id,
+          title: complaint.title,
+          status: complaint.status,
+          priority: complaint.priority,
+          category: complaint.category,
+          photos: complaint.photos,
+          createdAt: complaint.createdAt,
+        },
+        ai: {
+          triage: {
+            priority: (triage as any).priority,
+            category: (triage as any).category,
+            reasoning: (triage as any).reasoning,
+            estimatedResolutionHours: (triage as any).estimatedResolutionHours,
+            isEmergency: (triage as any).isEmergency,
+          },
+          acknowledgement: draftResponse.body,
+        },
+      });
+    } catch (err) {
+      console.error('[complaints] POST failed:', err);
+      return res.status(500).json({ success: false, message: 'Failed to submit complaint. Please try again.' });
+    }
   }
 );
 
