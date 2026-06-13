@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, Pressable,
-  ActivityIndicator, Alert, RefreshControl, Image, TextInput,
+  ActivityIndicator, Alert, RefreshControl, Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
@@ -27,6 +27,7 @@ export function MarketplaceScreen({ navigation }: any) {
   const [listings, setListings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
 
   const loadListings = useCallback(async () => {
@@ -36,8 +37,9 @@ export function MarketplaceScreen({ navigation }: any) {
       if (activeCategory !== 'all') params.category = activeCategory;
       const res = await api.get('/marketplace', { params });
       setListings(res.data.listings);
+      setLoadError(false);
     } catch {
-      Alert.alert('Error', 'Could not load listings.');
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -59,6 +61,18 @@ export function MarketplaceScreen({ navigation }: any) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={styles.center}>
+        <MaterialCommunityIcons name="store-outline" size={48} color={Colors.textDisabled} />
+        <Text style={styles.errorText}>Could not load marketplace</Text>
+        <Pressable style={styles.retryBtn} onPress={() => { setLoading(true); setLoadError(false); loadListings(); }}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </Pressable>
       </View>
     );
   }
@@ -186,4 +200,7 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 60, gap: Spacing.sm },
   emptyText: { color: Colors.textSecondary, fontSize: FontSizes.md, fontWeight: '600' },
   emptyHint: { color: Colors.textDisabled, fontSize: FontSizes.sm },
+  errorText: { fontSize: FontSizes.md, fontWeight: '700', color: Colors.textSecondary, marginTop: Spacing.md },
+  retryBtn: { marginTop: Spacing.md, backgroundColor: Colors.primary, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderRadius: Radius.md },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
 });
