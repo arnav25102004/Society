@@ -1,11 +1,13 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable, Alert, ScrollView } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { AppTabParamList } from '../types';
 import { Colors } from '../theme';
+import { useAuthStore } from '../store/authStore';
+import { api } from '../services/api';
 
 // Screens
 import { HomeScreen } from '../screens/home/HomeScreen';
@@ -26,6 +28,8 @@ const Tab = createBottomTabNavigator<AppTabParamList>();
 
 // More screen with links to all extra features
 function MoreScreen({ navigation }: any) {
+  const { user, activeMembership, logout } = useAuthStore();
+
   const items = [
     { label: 'Announcements', icon: 'bullhorn-outline', screen: 'Announcements' },
     { label: 'Marketplace', icon: 'store-outline', screen: 'Marketplace' },
@@ -35,51 +39,96 @@ function MoreScreen({ navigation }: any) {
     { label: 'AI Assistant', icon: 'robot-outline', screen: 'AIChat' },
   ];
 
+  function handleLogout() {
+    Alert.alert(
+      'Sign Out',
+      'This will clear your session. You will need to log in again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign Out', style: 'destructive', onPress: () => logout() },
+      ]
+    );
+  }
+
   return (
-    <View style={{ flex: 1, backgroundColor: Colors.background }}>
-      {items.map(item => (
-        <View key={item.label} style={{
-          backgroundColor: Colors.surface, marginHorizontal: 16, marginTop: 12,
-          borderRadius: 12, borderWidth: 1, borderColor: item.danger ? '#FECACA' : Colors.border,
+    <ScrollView style={{ flex: 1, backgroundColor: Colors.background }}>
+      {/* Profile card */}
+      <View style={{
+        backgroundColor: Colors.surface, marginHorizontal: 16, marginTop: 16,
+        borderRadius: 12, borderWidth: 1, borderColor: Colors.border, padding: 16,
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+      }}>
+        <View style={{
+          width: 48, height: 48, borderRadius: 24,
+          backgroundColor: Colors.primaryLight, justifyContent: 'center', alignItems: 'center',
         }}>
-          <View
-            style={{ flexDirection: 'row', alignItems: 'center', padding: 16, gap: 16 }}
-          >
-            <View style={{
-              width: 44, height: 44, borderRadius: 12,
-              backgroundColor: item.danger ? '#FEE2E2' : Colors.primaryLight,
-              justifyContent: 'center', alignItems: 'center',
-            }}>
-              <MaterialCommunityIcons
-                name={item.icon as any}
-                size={22}
-                color={item.danger ? Colors.error : Colors.primary}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{ fontWeight: '600', color: item.danger ? Colors.error : Colors.textPrimary, fontSize: 15 }}
-                onPress={() => navigation.navigate(item.screen)}
-              >
-                {item.label}
-              </Text>
-            </View>
-            <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.textDisabled} />
-          </View>
+          <MaterialCommunityIcons name="account" size={26} color={Colors.primary} />
         </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontWeight: '700', fontSize: 15, color: Colors.textPrimary }}>{user?.name ?? 'Resident'}</Text>
+          <Text style={{ fontSize: 12, color: Colors.textSecondary, marginTop: 2 }}>
+            {activeMembership?.societyName} · Flat {activeMembership?.flatNumber}
+          </Text>
+          <Text style={{ fontSize: 11, color: Colors.textDisabled, marginTop: 1 }}>{user?.phone}</Text>
+        </View>
+      </View>
+
+      {/* Feature links */}
+      {items.map(item => (
+        <Pressable
+          key={item.label}
+          style={{
+            backgroundColor: Colors.surface, marginHorizontal: 16, marginTop: 10,
+            borderRadius: 12, borderWidth: 1, borderColor: item.danger ? '#FECACA' : Colors.border,
+            flexDirection: 'row', alignItems: 'center', padding: 16, gap: 16,
+          }}
+          onPress={() => navigation.navigate(item.screen)}
+        >
+          <View style={{
+            width: 44, height: 44, borderRadius: 12,
+            backgroundColor: item.danger ? '#FEE2E2' : Colors.primaryLight,
+            justifyContent: 'center', alignItems: 'center',
+          }}>
+            <MaterialCommunityIcons
+              name={item.icon as any}
+              size={22}
+              color={item.danger ? Colors.error : Colors.primary}
+            />
+          </View>
+          <Text style={{ flex: 1, fontWeight: '600', color: item.danger ? Colors.error : Colors.textPrimary, fontSize: 15 }}>
+            {item.label}
+          </Text>
+          <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.textDisabled} />
+        </Pressable>
       ))}
-    </View>
+
+      {/* Logout */}
+      <Pressable
+        onPress={handleLogout}
+        style={{
+          marginHorizontal: 16, marginTop: 24, marginBottom: 40,
+          borderRadius: 12, borderWidth: 1, borderColor: Colors.border,
+          backgroundColor: Colors.surface, flexDirection: 'row',
+          alignItems: 'center', padding: 16, gap: 16,
+        }}
+      >
+        <View style={{
+          width: 44, height: 44, borderRadius: 12,
+          backgroundColor: Colors.surfaceVariant, justifyContent: 'center', alignItems: 'center',
+        }}>
+          <MaterialCommunityIcons name="logout" size={22} color={Colors.textSecondary} />
+        </View>
+        <Text style={{ flex: 1, fontWeight: '600', color: Colors.textSecondary, fontSize: 15 }}>Sign Out</Text>
+      </Pressable>
+    </ScrollView>
   );
 }
 
 // Complaints list screen (simple wrapper showing all complaints)
 function TicketsScreen({ navigation }: any) {
-  const { useAuthStore } = require('../store/authStore');
   const { activeMembership } = useAuthStore();
   const [complaints, setComplaints] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const api = require('../services/api').default;
-
   React.useEffect(() => {
     if (!activeMembership?.societyId) return;
     api.get('/complaints', { params: { societyId: activeMembership.societyId } })
