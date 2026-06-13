@@ -17,7 +17,7 @@ const IS_PROD = process.env.NODE_ENV === 'production' || process.env.EAS_BUILD =
 const API_URL = process.env.API_URL
   ?? (IS_PROD
     ? 'https://YOUR-APP.up.railway.app/api/v1'   // ← replace after deploying
-    : 'http://10.40.0.20:3000/api/v1');           // ← your current laptop IP
+    : 'http://10.40.0.130:3000/api/v1');          // ← your current laptop IP
 
 const WS_URL = API_URL.replace('/api/v1', '').replace('https://', 'wss://').replace('http://', 'ws://');
 
