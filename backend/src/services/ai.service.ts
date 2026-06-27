@@ -277,14 +277,211 @@ Answer helpfully and concisely. If you don't know something specific, say so hon
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "I'm having trouble right now. Please try again.";
 }
 
+// ─── Groq provider (OpenAI-compatible, fetch-based) ──────────────────────────
+//
+// Groq runs open models (Llama 3.x, gpt-oss) behind an OpenAI-compatible API.
+// We use plain fetch (no SDK) to stay consistent with the Gemini path above.
+// Triage + draft use Structured Outputs (strict JSON schema) so the model
+// physically cannot return malformed JSON — replacing the fragile regex parsing.
+
+interface GroqMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export async function groqChatCompletion(body: Record<string, unknown>): Promise<any> {
+  const resp = await fetch(`${env.ai.groqBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.ai.groqApiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Groq API error ${resp.status}: ${text}`);
+  }
+  return resp.json();
+}
+
+const TRIAGE_JSON_SCHEMA = {
+  name: 'complaint_triage',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
+      category: {
+        type: 'string',
+        enum: ['plumbing', 'electrical', 'structural', 'sanitation', 'security', 'noise', 'elevator', 'parking', 'internet', 'pest', 'other'],
+      },
+      confidence: { type: 'number' },
+      reasoning: { type: 'string' },
+      suggestedTitle: { type: 'string' },
+      estimatedResolutionHours: { type: 'integer' },
+      isEmergency: { type: 'boolean' },
+    },
+    required: ['priority', 'category', 'confidence', 'reasoning', 'suggestedTitle', 'estimatedResolutionHours', 'isEmergency'],
+  },
+} as const;
+
+const DRAFT_JSON_SCHEMA = {
+  name: 'committee_response',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      subject: { type: 'string' },
+      body: { type: 'string' },
+      internalNote: { type: 'string' },
+    },
+    required: ['subject', 'body', 'internalNote'],
+  },
+} as const;
+
+const TRIAGE_SYSTEM_PROMPT = `You are an AI assistant for a housing society management app in India. Analyze the resident's complaint and classify it.
+
+Priority rules:
+- critical: Fire, flooding, gas leak, person trapped in elevator, structural collapse risk, security breach
+- high: No electricity/water in flat, sewage overflow, pest infestation, locked out, serious security issue
+- medium: Plumbing issues (functional), AC not working, minor electrical, parking disputes
+- low: Cosmetic issues, painting, gardening, suggestions
+
+estimatedResolutionHours should reflect the priority SLA (critical 4, high 24, medium 72, low 168). reasoning is 1-2 sentences shown to the committee.`;
+
+async function groqTriage(title: string, description: string): Promise<TriageResult> {
+  const data = await groqChatCompletion({
+    model: env.ai.modelFast,
+    temperature: 0.1,
+    max_tokens: 500,
+    response_format: { type: 'json_schema', json_schema: TRIAGE_JSON_SCHEMA },
+    messages: [
+      { role: 'system', content: TRIAGE_SYSTEM_PROMPT },
+      { role: 'user', content: `Title: "${title}"\nDescription: "${description}"` },
+    ] as GroqMessage[],
+  });
+  const content = data.choices?.[0]?.message?.content ?? '';
+  return JSON.parse(content) as TriageResult;
+}
+
+async function groqDraftResponse(
+  residentName: string,
+  flatNumber: string,
+  societyName: string,
+  triage: TriageResult,
+  complaintTitle: string
+): Promise<DraftResponse> {
+  const data = await groqChatCompletion({
+    model: env.ai.modelFast,
+    temperature: 0.4,
+    max_tokens: 600,
+    response_format: { type: 'json_schema', json_schema: DRAFT_JSON_SCHEMA },
+    messages: [
+      {
+        role: 'system',
+        content: `You help a housing society committee in India reply to a resident complaint. Write a warm, professional, empathetic response under 150 words. Mention what happens next and that progress is trackable in the SocietyHub app. internalNote is for committee eyes only (AI reasoning, suggested action).`,
+      },
+      {
+        role: 'user',
+        content: `Resident: ${residentName}, Flat ${flatNumber}, ${societyName}\nComplaint: "${complaintTitle}"\nPriority: ${triage.priority.toUpperCase()}\nCategory: ${triage.category}\nExpected resolution: ${triage.estimatedResolutionHours} hours`,
+      },
+    ] as GroqMessage[],
+  });
+  const content = data.choices?.[0]?.message?.content ?? '';
+  return JSON.parse(content) as DraftResponse;
+}
+
+async function groqChat(messages: ChatMessage[], context: ChatContext): Promise<string> {
+  const systemPrompt = `You are SocietyBot, the AI assistant for ${context.societyName} housing society in India.
+You are speaking with ${context.residentName} from Flat ${context.flatNumber}.
+
+Their current context:
+- Pending dues: ₹${context.pendingDues}
+- Open complaints: ${context.openComplaints.length === 0 ? 'None' : context.openComplaints.map(c => `"${c.title}" (${c.status}, ${c.priority} priority)`).join(', ')}
+- Recent announcements: ${context.recentAnnouncements.length === 0 ? 'None' : context.recentAnnouncements.map(a => `"${a.title}" on ${a.date}`).join(', ')}
+
+Answer helpfully and concisely (under 100 words). If you don't know something specific, say so honestly and offer to create a ticket for the committee. Respond in the same language as the user (Hindi/English/Hinglish is fine).`;
+
+  const data = await groqChatCompletion({
+    model: env.ai.modelSmart,
+    temperature: 0.5,
+    max_tokens: 400,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      ...messages.map(m => ({ role: m.role, content: m.content })),
+    ] as GroqMessage[],
+  });
+  return data.choices?.[0]?.message?.content ?? "I'm having trouble right now. Please try again.";
+}
+
+// ─── Smart Agreements (Phase 3 — LLM generation, no RAG) ─────────────────────
+
+export type AgreementType = 'rent' | 'lease' | 'leave_license';
+
+export interface AgreementInput {
+  type: AgreementType;
+  societyName: string;
+  flatNumber: string;
+  details: Record<string, any>; // landlordName, tenantName, monthlyRent, deposit, durationMonths, startDate, …
+}
+
+const AGREEMENT_LABELS: Record<AgreementType, string> = {
+  rent: 'Rental Agreement',
+  lease: 'Lease Agreement',
+  leave_license: 'Leave & License Agreement',
+};
+
+function mockGenerateAgreement(input: AgreementInput): string {
+  const d = input.details ?? {};
+  return `# ${AGREEMENT_LABELS[input.type]}
+
+This ${AGREEMENT_LABELS[input.type]} is made for Flat ${input.flatNumber}, ${input.societyName}.
+
+**Landlord/Licensor:** ${d.landlordName ?? '____'}
+**Tenant/Licensee:** ${d.tenantName ?? '____'}
+**Monthly Rent:** ₹${d.monthlyRent ?? '____'}
+**Security Deposit:** ₹${d.deposit ?? '____'}
+**Duration:** ${d.durationMonths ?? '____'} months from ${d.startDate ?? '____'}
+
+## Society-specific clauses
+1. The Tenant shall abide by all rules and bylaws of ${input.societyName}.
+2. The Tenant shall pay maintenance charges as levied by the society.
+3. The Tenant shall register with the society office and obtain gate access.
+
+(Template fallback — set a Groq key for a fully drafted agreement.)`;
+}
+
+async function groqGenerateAgreement(input: AgreementInput): Promise<string> {
+  const data = await groqChatCompletion({
+    model: env.ai.modelSmart,
+    temperature: 0.3,
+    max_tokens: 2000,
+    messages: [
+      {
+        role: 'system',
+        content: `You are a legal document assistant for housing societies in India. Draft a complete, professional ${AGREEMENT_LABELS[input.type]} in Markdown. Use the provided structured details. Include standard clauses (parties, premises, rent/deposit, duration, termination, maintenance, use of premises) AND society-specific clauses (abide by society bylaws, pay society maintenance, register with society office for gate access). Use clear numbered clauses. Leave a blank line for any missing detail rather than inventing it. Output ONLY the agreement document.`,
+      },
+      {
+        role: 'user',
+        content: `Society: ${input.societyName}\nFlat: ${input.flatNumber}\nType: ${AGREEMENT_LABELS[input.type]}\nDetails: ${JSON.stringify(input.details)}`,
+      },
+    ] as GroqMessage[],
+  });
+  return data.choices?.[0]?.message?.content ?? mockGenerateAgreement(input);
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export const aiService = {
   async triageComplaint(title: string, description: string): Promise<TriageResult> {
     try {
+      if (env.ai.provider === 'groq') return await groqTriage(title, description);
       if (env.ai.provider === 'gemini') return await geminiTriage(title, description);
     } catch (err) {
-      console.warn('[AI] Gemini triage failed, falling back to mock:', (err as Error).message);
+      console.warn(`[AI] ${env.ai.provider} triage failed, falling back to mock:`, (err as Error).message);
     }
     return mockTriage(title, description);
   },
@@ -297,22 +494,24 @@ export const aiService = {
     complaintTitle: string
   ): Promise<DraftResponse> {
     try {
+      if (env.ai.provider === 'groq') {
+        return await groqDraftResponse(residentName, flatNumber, societyName, triage, complaintTitle);
+      }
       if (env.ai.provider === 'gemini') {
         return await geminiDraftResponse(residentName, flatNumber, societyName, triage, complaintTitle);
       }
     } catch (err) {
-      console.warn('[AI] Gemini draft failed, falling back to mock:', (err as Error).message);
+      console.warn(`[AI] ${env.ai.provider} draft failed, falling back to mock:`, (err as Error).message);
     }
     return mockDraftResponse(residentName, flatNumber, triage, complaintTitle);
   },
 
   async chat(messages: ChatMessage[], context: ChatContext): Promise<string> {
-    if (env.ai.provider === 'gemini') {
-      try {
-        return await geminiChat(messages, context);
-      } catch (err) {
-        console.warn('[AI] Gemini chat failed:', (err as Error).message);
-      }
+    try {
+      if (env.ai.provider === 'groq') return await groqChat(messages, context);
+      if (env.ai.provider === 'gemini') return await geminiChat(messages, context);
+    } catch (err) {
+      console.warn(`[AI] ${env.ai.provider} chat failed, falling back to mock:`, (err as Error).message);
     }
     // Mock fallback for chat
     const last = messages[messages.length - 1]?.content?.toLowerCase() ?? '';
@@ -327,5 +526,14 @@ export const aiService = {
         : `You have no open complaints. 🎉`;
     }
     return `I am SocietyBot for ${context.societyName}! I can help you check your dues, complaint status, or society announcements. What would you like to know?`;
+  },
+
+  async generateAgreement(input: AgreementInput): Promise<string> {
+    try {
+      if (env.ai.provider === 'groq') return await groqGenerateAgreement(input);
+    } catch (err) {
+      console.warn(`[AI] ${env.ai.provider} agreement generation failed, falling back to template:`, (err as Error).message);
+    }
+    return mockGenerateAgreement(input);
   },
 };

@@ -140,6 +140,8 @@ model Society {
   sosAlerts          SosAlert[]
   expenseCategories  ExpenseCategory[]
   expenses           Expense[]
+  knowledgeEntries   KnowledgeEntry[]
+  agreements         Agreement[]
 
   @@map("societies")
 }
@@ -170,6 +172,8 @@ model User {
   sosAlerts             SosAlert[]            @relation("SosRaisedBy")
   sosResponses          SosAlert[]            @relation("SosRespondedBy")
   expensesCreated       Expense[]
+  knowledgeEntries      KnowledgeEntry[]
+  agreements            Agreement[]
 
   @@map("users")
 }
@@ -494,4 +498,56 @@ model Expense {
 
   @@index([societyId, expenseMonth])
   @@map("expenses")
+}
+
+// ─── AI: Knowledge base (Phase 2 — committee-filled FAQ, RAG-ready) ───────────
+
+model KnowledgeEntry {
+  id          String   @id @default(uuid())
+  societyId   String
+  topic       String   @db.VarChar(200)   // e.g. "Pet policy", "Guest parking"
+  question    String   @db.VarChar(500)   // canonical question phrasing
+  answer      String                       // the policy/answer text
+  keywords    String[]                     // for keyword/full-text retrieval
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  society   Society @relation(fields: [societyId], references: [id])
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@index([societyId])
+  @@map("knowledge_entries")
+}
+
+// ─── AI: Smart Agreements (Phase 3 — LLM-generated documents) ─────────────────
+
+enum AgreementType {
+  rent
+  lease
+  leave_license
+}
+
+enum AgreementStatus {
+  draft
+  finalized
+}
+
+model Agreement {
+  id          String          @id @default(uuid())
+  societyId   String
+  createdById String
+  type        AgreementType
+  status      AgreementStatus @default(draft)
+  flatNumber  String          @db.VarChar(20)
+  inputs      Json            // structured party/term inputs used to generate
+  content     String          // generated agreement text (markdown)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  society   Society @relation(fields: [societyId], references: [id])
+  createdBy User    @relation(fields: [createdById], references: [id])
+
+  @@index([societyId])
+  @@map("agreements")
 }

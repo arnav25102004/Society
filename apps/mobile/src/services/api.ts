@@ -2,7 +2,7 @@ import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 
-const BASE_URL = Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:3000/api/v1';
+const BASE_URL = Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:3002/api/v1';
 
 export const api = axios.create({
   baseURL: BASE_URL,
@@ -17,17 +17,9 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// ─── Response interceptor: auto-refresh on 401, force logout if refresh fails ─
+// ─── Response interceptor: auto-refresh on 401 ───────────────────────────────
 let isRefreshing = false;
 let refreshQueue: Array<(token: string) => void> = [];
-
-async function forceLogout() {
-  const keys = ['sh_access_token', 'sh_refresh_token', 'sh_user', 'sh_memberships', 'sh_active_membership_id'];
-  await Promise.all(keys.map(k => SecureStore.deleteItemAsync(k).catch(() => {})));
-  // Dynamically import to avoid circular dependency
-  const { useAuthStore } = require('../store/authStore');
-  useAuthStore.getState().logout();
-}
 
 api.interceptors.response.use(
   (response) => response,
@@ -38,7 +30,8 @@ api.interceptors.response.use(
       originalRequest._retry = true;
 
       if (isRefreshing) {
-        return new Promise((resolve, reject) => {
+        // Queue requests while refresh is in flight
+        return new Promise((resolve) => {
           refreshQueue.push((newToken: string) => {
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
             resolve(api(originalRequest));
@@ -61,9 +54,10 @@ api.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return api(originalRequest);
       } catch {
-        // Refresh failed — clear everything and send user to login
-        refreshQueue = [];
-        await forceLogout();
+        // Refresh failed — clear tokens (force re-login)
+        await SecureStore.deleteItemAsync('sh_access_token');
+        await SecureStore.deleteItemAsync('sh_refresh_token');
+        // AuthStore will detect missing tokens on next app start
       } finally {
         isRefreshing = false;
       }

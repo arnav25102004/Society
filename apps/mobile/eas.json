@@ -7,7 +7,7 @@
       "developmentClient": true,
       "distribution": "internal",
       "env": {
-        "API_URL": "http://10.40.0.20:3000/api/v1"
+        "API_URL": "http://10.40.0.20:3002/api/v1"
       }
     },
     "preview": {

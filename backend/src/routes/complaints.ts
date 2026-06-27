@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../config/db';
 import { aiService, Priority } from '../services/ai.service';
+import { runAgent } from '../services/ai.agent';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
 
@@ -318,7 +319,8 @@ complaintsRouter.post('/ai/chat', validate(chatSchema), async (req: Request, res
 
   if (!member) return res.status(403).json({ success: false, message: 'Not a member' });
 
-  const reply = await aiService.chat(messages, {
+  // Fallback context for non-agent providers (mock/gemini) or if the agent loop errors.
+  const fallbackContext = {
     residentName: user?.name ?? 'Resident',
     flatNumber: member.flatNumber,
     societyName: society?.name ?? 'Your Society',
@@ -332,7 +334,20 @@ complaintsRouter.post('/ai/chat', validate(chatSchema), async (req: Request, res
       title: a.title,
       date: a.createdAt.toLocaleDateString('en-IN'),
     })),
-  });
+  };
+
+  // Agent path (Groq tool calling). Tools re-scope to this user — see ai.tools.ts security note.
+  const reply = await runAgent(
+    messages,
+    {
+      userId,
+      societyId,
+      flatNumber: member.flatNumber,
+      residentName: user?.name ?? 'Resident',
+      societyName: society?.name ?? 'Your Society',
+    },
+    fallbackContext
+  );
 
   res.json({ success: true, reply });
 });

@@ -42,6 +42,7 @@ const refreshSchema = z.object({
 
 authRouter.post('/send-otp', validate(sendOtpSchema), async (req: Request, res: Response) => {
   const { phone } = req.body as z.infer<typeof sendOtpSchema>;
+  console.log(`[Auth] Received OTP request for: ${phone}`);
   const result = await otpService.send(phone);
   if (!result.success) {
     return res.status(429).json({ success: false, message: result.message });

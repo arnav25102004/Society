@@ -4,6 +4,7 @@ import multer from 'multer';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/db';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
@@ -242,7 +243,7 @@ visitorsRouter.post('/pre-approve', validate(preApprovalSchema), async (req: Req
       flatNumber: member.flatNumber,
       visitorName,
       visitorPhone,
-      schedule: schedule ?? null,
+      schedule: schedule ?? Prisma.JsonNull,
       validFrom: new Date(validFrom),
       validUntil: validUntil ? new Date(validUntil) : null,
     },

@@ -19,7 +19,7 @@ function get(key: string, devDefault: string): string {
 export const env = {
   NODE_ENV: process.env.NODE_ENV ?? 'development',
   isDev,
-  PORT: parseInt(process.env.PORT ?? '3000', 10),
+  PORT: parseInt(process.env.PORT ?? '3002', 10),
 
   // In dev: works out of box with docker-compose defaults
   DATABASE_URL: get('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/societyhub'),
@@ -61,10 +61,22 @@ export const env = {
     s3PublicUrl: process.env.S3_PUBLIC_URL ?? '',
   },
 
-  // AI: uses Google Gemini (has free tier). Falls back to 'mock' in dev if no key set.
+  // AI provider. Auto-selects: groq if GROQ_API_KEY set, else gemini if GEMINI_API_KEY set,
+  // else 'mock' (rule-based, no key needed). Override explicitly with AI_PROVIDER.
+  // Groq is OpenAI-compatible (https://console.groq.com) — fast, cheap, open models.
   ai: {
-    provider: (process.env.AI_PROVIDER ?? (process.env.GEMINI_API_KEY ? 'gemini' : 'mock')) as 'mock' | 'gemini' | 'openai',
+    provider: (process.env.AI_PROVIDER ??
+      (process.env.GROQ_API_KEY ? 'groq' : process.env.GEMINI_API_KEY ? 'gemini' : 'mock')) as
+      'mock' | 'gemini' | 'openai' | 'groq',
     geminiApiKey: process.env.GEMINI_API_KEY ?? '',
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',
+
+    // Groq (OpenAI-compatible) config
+    groqApiKey: process.env.GROQ_API_KEY ?? '',
+    groqBaseUrl: process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
+    // Fast + cheap model with strict Structured Outputs (triage, draft).
+    modelFast: process.env.AI_MODEL_FAST ?? 'openai/gpt-oss-20b',
+    // Capable model with tool calling (chat, agent).
+    modelSmart: process.env.AI_MODEL_SMART ?? 'llama-3.3-70b-versatile',
   },
 } as const;

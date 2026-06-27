@@ -20,14 +20,33 @@ import { marketplaceRouter } from './routes/marketplace';
 import { amenitiesRouter } from './routes/amenities';
 import { sosRouter } from './routes/sos';
 import { expensesRouter } from './routes/expenses';
+import { knowledgeRouter } from './routes/knowledge';
+import { agreementsRouter } from './routes/agreements';
 import { errorHandler } from './middleware/errorHandler';
 
 const app = express();
 const httpServer = createServer(app);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+app.use(helmet({ crossOriginResourcePolicy: false })); // Allow loading images from other domains in dev
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow all origins in dev, or specific ones in prod
+      if (!origin || env.isDev) {
+        callback(null, true);
+      } else {
+        const allowed = [env.CORS_ORIGIN];
+        if (allowed.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error('Not allowed by CORS'));
+        }
+      }
+    },
+    credentials: true,
+  })
+);
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -54,6 +73,8 @@ app.use('/api/v1/marketplace', marketplaceRouter);
 app.use('/api/v1/amenities', amenitiesRouter);
 app.use('/api/v1/sos', sosRouter);
 app.use('/api/v1/expenses', expensesRouter);
+app.use('/api/v1/knowledge', knowledgeRouter);
+app.use('/api/v1/agreements', agreementsRouter);
 
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {
@@ -68,8 +89,8 @@ async function start() {
   await redis.connect();
   await prisma.$connect();
 
-  httpServer.listen(env.PORT, () => {
-    console.log(`[Server] Running on http://localhost:${env.PORT} (${env.NODE_ENV})`);
+  httpServer.listen(env.PORT, '0.0.0.0', () => {
+    console.log(`[Server] Running on http://0.0.0.0:${env.PORT} (${env.NODE_ENV})`);
   });
 }
 

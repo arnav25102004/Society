@@ -19,3 +19,4 @@ ios/
 coverage/
 .nyc_output/
 prisma/migrations/
+/docs
