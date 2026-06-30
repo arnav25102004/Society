@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'crypto';
+import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 
 import { validate } from '../middleware/validate';
@@ -8,34 +10,75 @@ import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { otpService } from '../services/otp.service';
 import { jwtService } from '../services/jwt.service';
 import { prisma } from '../config/db';
+import { env } from '../config/env';
+import { encryptSearchable, encryptField, decryptField } from '../utils/encryption';
+import { SecurityAuditService } from '../services/security-audit.service';
 
 export const authRouter = Router();
 
-// Rate limiter specifically for auth endpoints
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MAX_OTP_FAILURES   = 5;
+const FAILURE_WINDOW_MS  = 10 * 60 * 1000;  // 10 minutes
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000;  // 15 minutes
+const REFRESH_EXPIRY_MS  = 7 * 24 * 60 * 60 * 1000;
+
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 20,
   message: { success: false, message: 'Too many requests, please try again later.' },
 });
-
 authRouter.use(authLimiter);
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+async function sendNewDeviceAlert(tokens: string[], deviceName: string): Promise<void> {
+  const validTokens = tokens.filter(t => t?.startsWith('ExponentPushToken['));
+  if (validTokens.length === 0) return;
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validTokens.map(to => ({
+        to,
+        title: 'New device login',
+        body: `Your account was accessed from ${deviceName}. If this wasn't you, tap to review active sessions.`,
+        data: { type: 'security_alert', action: 'new_device' },
+        priority: 'high',
+      }))),
+    });
+  } catch {
+    // Non-critical — don't block the login
+  }
+}
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
 const sendOtpSchema = z.object({
-  phone: z
-    .string()
-    .regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
 });
 
 const verifyOtpSchema = z.object({
-  phone: z.string().regex(/^[6-9]\d{9}$/),
-  otp: z.string().length(6, 'OTP must be 6 digits'),
-  deviceId: z.string().optional(),
+  phone:      z.string().regex(/^[6-9]\d{9}$/),
+  otp:        z.string().length(6, 'OTP must be 6 digits'),
+  deviceId:   z.string().max(200).optional(),
+  deviceName: z.string().max(200).optional(),
 });
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
+});
+
+const setPinSchema = z.object({
+  pin: z.string().length(6, 'PIN must be exactly 6 digits').regex(/^\d{6}$/, 'PIN must be numeric'),
+});
+
+const verifyPinSchema = z.object({
+  pin: z.string().length(6).regex(/^\d{6}$/),
 });
 
 // ─── POST /auth/send-otp ──────────────────────────────────────────────────────
@@ -51,61 +94,156 @@ authRouter.post('/send-otp', validate(sendOtpSchema), async (req: Request, res: 
 });
 
 // ─── POST /auth/verify-otp ────────────────────────────────────────────────────
-// Returns JWT pair + user profile + membership status
 
 authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, res: Response) => {
-  const { phone, otp, deviceId } = req.body as z.infer<typeof verifyOtpSchema>;
+  const { phone, otp, deviceId, deviceName } = req.body as z.infer<typeof verifyOtpSchema>;
+  const ip        = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? '';
+  const userAgent = req.headers['user-agent'] ?? '';
+  const headerDeviceId = req.headers['x-device-id'] as string | undefined;
+  const effectiveDeviceId = deviceId ?? headerDeviceId;
 
-  const valid = await otpService.verify(phone, otp);
-  if (!valid) {
-    return res.status(401).json({ success: false, message: 'Invalid or expired OTP' });
-  }
-
-  // Upsert user — create on first login
-  let user = await prisma.user.findUnique({ where: { phone } });
-  const isNewUser = !user;
-
-  if (!user) {
-    user = await prisma.user.create({
-      data: { phone, name: '' }, // name filled in ProfileSetup
+  // ── Account lockout check ─────────────────────────────────────────────────
+  const attempt = await prisma.loginAttempt.findUnique({ where: { phone } });
+  if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) {
+    const waitMinutes = Math.ceil((attempt.lockedUntil.getTime() - Date.now()) / 60000);
+    return res.status(429).json({
+      success: false,
+      message: `Too many attempts. Try again in ${waitMinutes} minute${waitMinutes !== 1 ? 's' : ''}.`,
     });
   }
 
-  // Return all memberships (approved + pending) so the app can route correctly
+  // ── OTP verification ──────────────────────────────────────────────────────
+  const valid = await otpService.verify(phone, otp);
+  if (!valid) {
+    // Record failed attempt
+    const now = new Date();
+    const recentWindow = new Date(Date.now() - FAILURE_WINDOW_MS);
+    const isWithinWindow = attempt?.lastAttemptAt && attempt.lastAttemptAt > recentWindow;
+    const newCount = isWithinWindow ? (attempt?.attemptCount ?? 0) + 1 : 1;
+    const lockUntil = newCount >= MAX_OTP_FAILURES
+      ? new Date(Date.now() + LOCKOUT_DURATION_MS)
+      : null;
+
+    await prisma.loginAttempt.upsert({
+      where:  { phone },
+      update: { attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
+      create: { phone, attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
+    });
+
+    SecurityAuditService.log({
+      action: 'auth.otp_failed',
+      ipAddress: SecurityAuditService.extractIp(req),
+      userAgent: req.headers['user-agent'],
+      success: false,
+      metadata: { phone: `****${phone.slice(-4)}`, attemptCount: newCount },
+    });
+    // Always return the same generic message to avoid timing/oracle attacks
+    return res.status(401).json({ success: false, message: 'Invalid or expired OTP' });
+  }
+
+  // ── Success — reset lockout ───────────────────────────────────────────────
+  await prisma.loginAttempt.upsert({
+    where:  { phone },
+    update: { attemptCount: 0, lockedUntil: null },
+    create: { phone, attemptCount: 0 },
+  });
+
+  // ── Upsert user (phone encrypted at rest) ────────────────────────────────
+  const encryptedPhone = encryptSearchable(phone);
+  let user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
+  const isNewUser = !user;
+  if (!user) {
+    user = await prisma.user.create({ data: { phone: encryptedPhone, name: '' } });
+  }
+
+  // ── Device fingerprinting ─────────────────────────────────────────────────
+  if (effectiveDeviceId) {
+    const existing = await prisma.deviceSession.findUnique({
+      where: { userId_deviceId: { userId: user.id, deviceId: effectiveDeviceId } },
+    });
+
+    if (!existing) {
+      // New device — create record and alert other devices
+      await prisma.deviceSession.create({
+        data: {
+          userId:     user.id,
+          deviceId:   effectiveDeviceId,
+          deviceName: deviceName ?? userAgent.slice(0, 200),
+          ipAddress:  ip,
+          userAgent:  userAgent.slice(0, 500),
+        },
+      });
+
+      // Notify all other trusted device push tokens
+      const otherDevices = await prisma.deviceSession.findMany({
+        where: { userId: user.id, deviceId: { not: effectiveDeviceId } },
+      });
+      if (otherDevices.length > 0) {
+        const otherUsers = await prisma.user.findMany({
+          where: { id: user.id },
+          select: { expoPushToken: true },
+        });
+        const tokens = otherUsers.flatMap(u => u.expoPushToken ? [u.expoPushToken] : []);
+        const name = deviceName ?? 'a new device';
+        sendNewDeviceAlert(tokens, name); // fire-and-forget
+      }
+    } else {
+      // Update last seen
+      await prisma.deviceSession.update({
+        where: { userId_deviceId: { userId: user.id, deviceId: effectiveDeviceId } },
+        data:  { lastSeenAt: new Date(), ipAddress: ip, userAgent: userAgent.slice(0, 500) },
+      });
+    }
+  }
+
+  // ── Return memberships ────────────────────────────────────────────────────
   const memberships = await prisma.societyMember.findMany({
-    where: { userId: user.id },
+    where:   { userId: user.id },
     include: { society: { select: { id: true, name: true, city: true } } },
   });
 
-  // Issue tokens
-  const tokenId = uuidv4();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  // ── Issue tokens (family-tracked) ─────────────────────────────────────────
+  const familyId = uuidv4();
+  const tokenId  = uuidv4();
+  const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_MS);
 
   const refreshToken = jwtService.signRefreshToken({ userId: user.id, tokenId });
-  await prisma.refreshToken.create({
-    data: { userId: user.id, token: refreshToken, deviceId, expiresAt },
+  const tokenHash    = hashToken(refreshToken);
+
+  await prisma.refreshTokenFamily.create({
+    data: { familyId, userId: user.id, tokenHash, expiresAt },
   });
 
-  const accessToken = jwtService.signAccessToken({ userId: user.id, phone: user.phone });
+  const accessToken = jwtService.signAccessToken({ userId: user.id, phone });  // raw phone in JWT
+
+  SecurityAuditService.log({
+    userId: user.id,
+    action: isNewUser ? 'auth.register' : 'auth.login',
+    ipAddress: SecurityAuditService.extractIp(req),
+    userAgent: req.headers['user-agent'],
+    success: true,
+    metadata: { deviceId: effectiveDeviceId, phone: `****${phone.slice(-4)}` },
+  });
 
   res.json({
     success: true,
     isNewUser,
     tokens: { accessToken, refreshToken },
     user: {
-      id: user.id,
-      phone: user.phone,
-      name: user.name,
+      id:        user.id,
+      phone,                // return raw phone to client
+      name:      user.name,
       avatarUrl: user.avatarUrl,
+      hasPinSet: !!user.pinHash,
     },
-    memberships: memberships.map((m) => ({
-      id: m.id,
-      societyId: m.societyId,
+    memberships: memberships.map(m => ({
+      id:          m.id,
+      societyId:   m.societyId,
       societyName: m.society.name,
       societyCity: m.society.city,
-      flatNumber: m.flatNumber,
-      role: m.role,
-      status: m.status,
+      flatNumber:  m.flatNumber,
+      role:        m.role,
+      status:      m.status,
     })),
   });
 });
@@ -120,28 +258,96 @@ authRouter.post('/refresh-token', validate(refreshSchema), async (req: Request, 
     return res.status(401).json({ success: false, message: 'Invalid refresh token' });
   }
 
-  // Check token exists in DB (allows server-side revocation)
-  const stored = await prisma.refreshToken.findUnique({ where: { token: refreshToken } });
-  if (!stored || stored.expiresAt < new Date()) {
-    return res.status(401).json({ success: false, message: 'Refresh token expired or revoked' });
+  const tokenHash = hashToken(refreshToken);
+  const stored    = await prisma.refreshTokenFamily.findUnique({ where: { tokenHash } });
+
+  if (!stored) {
+    // Could be old-format token (pre-upgrade) — fall back to legacy table
+    const legacy = await prisma.refreshToken.findUnique({ where: { token: refreshToken } });
+    if (!legacy || legacy.expiresAt < new Date()) {
+      return res.status(401).json({ success: false, message: 'Refresh token expired or revoked' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: payload.userId } });
+    if (!user) return res.status(401).json({ success: false, message: 'User not found' });
+    const accessToken = jwtService.signAccessToken({ userId: user.id, phone: user.phone });
+    return res.json({ success: true, accessToken });
   }
+
+  if (stored.expiresAt < new Date()) {
+    return res.status(401).json({ success: false, message: 'Refresh token expired' });
+  }
+
+  // ── Token reuse detection — possible theft ─────────────────────────────────
+  if (stored.isUsed) {
+    // Invalidate ALL tokens in this family immediately
+    await prisma.refreshTokenFamily.deleteMany({ where: { familyId: stored.familyId } });
+    console.warn(`[security] Refresh token reuse detected for user ${stored.userId} — family ${stored.familyId} invalidated`);
+    SecurityAuditService.log({
+      userId: stored.userId,
+      action: 'auth.token_reuse_detected',
+      ipAddress: SecurityAuditService.extractIp(req),
+      userAgent: req.headers['user-agent'],
+      success: false,
+      metadata: { familyId: stored.familyId },
+    });
+    return res.status(401).json({ success: false, message: 'Refresh token already used. All sessions invalidated for security.' });
+  }
+
+  // ── Mark current token as used ────────────────────────────────────────────
+  await prisma.refreshTokenFamily.update({
+    where: { tokenHash },
+    data:  { isUsed: true },
+  });
 
   const user = await prisma.user.findUnique({ where: { id: payload.userId } });
   if (!user) return res.status(401).json({ success: false, message: 'User not found' });
 
+  // ── Issue new token in same family ────────────────────────────────────────
+  const newTokenId    = uuidv4();
+  const newExpiresAt  = new Date(Date.now() + REFRESH_EXPIRY_MS);
+  const newRefresh    = jwtService.signRefreshToken({ userId: user.id, tokenId: newTokenId });
+  const newHash       = hashToken(newRefresh);
+
+  await prisma.refreshTokenFamily.create({
+    data: {
+      familyId:  stored.familyId,
+      userId:    user.id,
+      tokenHash: newHash,
+      expiresAt: newExpiresAt,
+    },
+  });
+
   const accessToken = jwtService.signAccessToken({ userId: user.id, phone: user.phone });
-  res.json({ success: true, accessToken });
+
+  res.json({ success: true, accessToken, refreshToken: newRefresh });
 });
 
 // ─── DELETE /auth/logout ──────────────────────────────────────────────────────
 
 authRouter.delete('/logout', requireAuth, validate(refreshSchema), async (req: Request, res: Response) => {
   const { refreshToken } = req.body as z.infer<typeof refreshSchema>;
-  await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+  const tokenHash = hashToken(refreshToken);
+
+  // Try new family table first
+  const stored = await prisma.refreshTokenFamily.findUnique({ where: { tokenHash } });
+  if (stored) {
+    await prisma.refreshTokenFamily.deleteMany({ where: { familyId: stored.familyId } });
+  } else {
+    // Legacy table
+    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+  }
+  const { userId } = (req as AuthenticatedRequest).user;
+  SecurityAuditService.log({
+    userId,
+    action: 'auth.logout',
+    ipAddress: SecurityAuditService.extractIp(req),
+    userAgent: req.headers['user-agent'],
+    success: true,
+  });
   res.json({ success: true, message: 'Logged out' });
 });
 
-// ─── PUT /auth/push-token — Register Expo push token ─────────────────────────
+// ─── PUT /auth/push-token ─────────────────────────────────────────────────────
 
 const pushTokenSchema = z.object({
   expoPushToken: z.string().startsWith('ExponentPushToken[').endsWith(']'),
@@ -159,9 +365,77 @@ authRouter.put('/push-token', requireAuth, validate(pushTokenSchema), async (req
 authRouter.get('/me', requireAuth, async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, phone: true, name: true, email: true, avatarUrl: true },
+    where:  { id: userId },
+    select: { id: true, phone: true, name: true, email: true, avatarUrl: true, pinHash: true },
   });
   if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-  res.json({ success: true, user });
+  res.json({
+    success: true,
+    user: {
+      id:        user.id,
+      phone:     decryptField(user.phone),
+      name:      user.name,
+      email:     user.email ? decryptField(user.email) : null,
+      avatarUrl: user.avatarUrl,
+      hasPinSet: !!user.pinHash,
+    },
+  });
+});
+
+// ─── GET /auth/devices ────────────────────────────────────────────────────────
+
+authRouter.get('/devices', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const devices = await prisma.deviceSession.findMany({
+    where:   { userId },
+    orderBy: { lastSeenAt: 'desc' },
+    select:  { id: true, deviceId: true, deviceName: true, ipAddress: true, lastSeenAt: true, isTrusted: true, createdAt: true },
+  });
+  res.json({ success: true, devices });
+});
+
+// ─── DELETE /auth/devices/:id ─────────────────────────────────────────────────
+
+authRouter.delete('/devices/:id', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const device = await prisma.deviceSession.findFirst({
+    where: { id: req.params.id, userId },
+  });
+  if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+  await prisma.deviceSession.delete({ where: { id: req.params.id } });
+  res.json({ success: true, message: 'Device revoked' });
+});
+
+// ─── POST /auth/pin/set ───────────────────────────────────────────────────────
+
+authRouter.post('/pin/set', requireAuth, validate(setPinSchema), async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const { pin } = req.body as z.infer<typeof setPinSchema>;
+
+  const pepperedPin = pin + env.security.pinPepper;
+  const pinHash = await bcrypt.hash(pepperedPin, 12);
+
+  await prisma.user.update({ where: { id: userId }, data: { pinHash } });
+  res.json({ success: true, message: 'PIN set successfully' });
+});
+
+// ─── POST /auth/pin/verify ────────────────────────────────────────────────────
+
+authRouter.post('/pin/verify', requireAuth, validate(verifyPinSchema), async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const { pin } = req.body as z.infer<typeof verifyPinSchema>;
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { pinHash: true } });
+  if (!user?.pinHash) {
+    return res.status(400).json({ success: false, message: 'No PIN set. Please set a PIN first.' });
+  }
+
+  const pepperedPin = pin + env.security.pinPepper;
+  const matches = await bcrypt.compare(pepperedPin, user.pinHash);
+  if (!matches) {
+    return res.status(401).json({ success: false, message: 'Incorrect PIN' });
+  }
+
+  const sensitiveActionToken = jwtService.signSensitiveActionToken(userId);
+  res.json({ success: true, sensitiveActionToken });
 });

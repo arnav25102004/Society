@@ -35,3 +35,31 @@ export function requireRole(...roles: string[]) {
     next();
   };
 }
+
+// Requires a valid sensitive_action_token in the X-Action-Token header.
+// Call POST /auth/pin/verify first to obtain one (valid 5 minutes).
+export function requirePin(req: Request, res: Response, next: NextFunction) {
+  const actionToken = req.headers['x-action-token'] as string | undefined;
+  if (!actionToken) {
+    return res.status(403).json({
+      success: false,
+      message: 'This action requires PIN verification. Call POST /auth/pin/verify first.',
+    });
+  }
+
+  const payload = jwtService.verifySensitiveActionToken(actionToken);
+  if (!payload) {
+    return res.status(403).json({
+      success: false,
+      message: 'Invalid or expired action token. Please verify your PIN again.',
+    });
+  }
+
+  // Ensure the action token belongs to the same user making the request
+  const authUser = (req as AuthenticatedRequest).user;
+  if (authUser && payload.userId !== authUser.userId) {
+    return res.status(403).json({ success: false, message: 'Action token user mismatch' });
+  }
+
+  next();
+}

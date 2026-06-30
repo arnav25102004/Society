@@ -1,13 +1,16 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import { Prisma } from '@prisma/client';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
-import { Prisma } from '@prisma/client';
+import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
+import { encryptField, decryptField } from '../utils/encryption';
+import { hasPermission } from '../utils/permissions';
 
 export const visitorsRouter = Router();
 visitorsRouter.use(requireAuth);
@@ -37,9 +40,11 @@ const preApprovalSchema = z.object({
 });
 
 // ─── POST /visitors — Guard registers visitor ─────────────────────────────────
+// HMAC-signed: guard app must include X-Signature + X-Timestamp headers
 
 visitorsRouter.post(
   '/',
+  verifyHmac,
   upload.single('photo'),
   async (req: Request, res: Response) => {
     const { userId } = (req as AuthenticatedRequest).user;
@@ -49,10 +54,12 @@ visitorsRouter.post(
     }
     const { societyId, flatNumber, visitorName, visitorPhone, purpose, companyName } = body.data;
 
+    const canWrite = await hasPermission(userId, 'visitor', 'write', { societyId });
+    if (!canWrite) return res.status(403).json({ success: false, message: 'Guard access required' });
+
     const guardMember = await prisma.societyMember.findFirst({
       where: { userId, societyId, role: { in: ['guard', 'committee', 'admin'] }, status: 'approved' },
     });
-    if (!guardMember) return res.status(403).json({ success: false, message: 'Guard access required' });
 
     // Check pre-approval
     const now = new Date();
@@ -89,7 +96,7 @@ visitorsRouter.post(
         societyId,
         flatNumber,
         visitorName,
-        visitorPhone,
+        visitorPhone: visitorPhone ? encryptField(visitorPhone) : undefined,
         visitorPhoto: photoUrl,
         purpose: purpose as any,
         companyName,
@@ -160,12 +167,18 @@ visitorsRouter.get('/', async (req: Request, res: Response) => {
     take: 50,
   });
 
-  res.json({ success: true, visitors });
+  const visitorsDecrypted = await Promise.all(visitors.map(async v => ({
+    ...v,
+    visitorPhone: v.visitorPhone ? decryptField(v.visitorPhone) : null,
+    visitorPhoto: v.visitorPhoto ? await storageService.getSignedUrl(v.visitorPhoto) : null,
+  })));
+  res.json({ success: true, visitors: visitorsDecrypted });
 });
 
 // ─── PUT /visitors/:id/approve — Resident approves visitor ───────────────────
+// HMAC-signed: mobile must include X-Signature + X-Timestamp headers
 
-visitorsRouter.put('/:id/approve', async (req: Request, res: Response) => {
+visitorsRouter.put('/:id/approve', verifyHmac, async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const visitor = await prisma.visitor.findUnique({ where: { id: req.params.id } });
   if (!visitor) return res.status(404).json({ success: false, message: 'Visitor not found' });
@@ -240,16 +253,19 @@ visitorsRouter.post('/pre-approve', validate(preApprovalSchema), async (req: Req
     data: {
       societyId,
       userId,
-      flatNumber: member.flatNumber,
+      flatNumber: member.flatNumber,  // already encrypted from join
       visitorName,
-      visitorPhone,
+      visitorPhone: visitorPhone ? encryptField(visitorPhone) : undefined,
       schedule: schedule ?? Prisma.JsonNull,
       validFrom: new Date(validFrom),
       validUntil: validUntil ? new Date(validUntil) : null,
     },
   });
 
-  res.status(201).json({ success: true, preApproval });
+  res.status(201).json({
+    success: true,
+    preApproval: { ...preApproval, visitorPhone: visitorPhone ?? null },
+  });
 });
 
 // ─── GET /visitors/pre-approvals — List my pre-approvals ─────────────────────
@@ -265,7 +281,11 @@ visitorsRouter.get('/pre-approvals', async (req: Request, res: Response) => {
     orderBy: { createdAt: 'desc' },
   });
 
-  res.json({ success: true, preApprovals });
+  const decrypted = preApprovals.map(p => ({
+    ...p,
+    visitorPhone: p.visitorPhone ? decryptField(p.visitorPhone) : null,
+  }));
+  res.json({ success: true, preApprovals: decrypted });
 });
 
 // ─── DELETE /visitors/pre-approvals/:id — Remove pre-approval ────────────────

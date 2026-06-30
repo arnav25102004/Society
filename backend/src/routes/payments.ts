@@ -3,8 +3,10 @@ import { z } from 'zod';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { notificationService } from '../services/notification.service';
+import { hasPermission } from '../utils/permissions';
 
 export const paymentsRouter = Router();
 paymentsRouter.use(requireAuth);
@@ -66,17 +68,20 @@ paymentsRouter.get('/bills/:id', async (req: Request, res: Response) => {
   });
   if (!bill) return res.status(404).json({ success: false, message: 'Bill not found' });
 
-  const member = await prisma.societyMember.findFirst({
-    where: { userId, societyId: bill.societyId, status: 'approved' },
+  // RBAC: residents can only read bills for their own flat; committee can read all
+  const canRead = await hasPermission(userId, 'bill', 'read', {
+    societyId: bill.societyId,
+    flatNumber: bill.flatNumber,
   });
-  if (!member) return res.status(403).json({ success: false, message: 'Access denied' });
+  if (!canRead) return res.status(403).json({ success: false, message: 'Access denied' });
 
   res.json({ success: true, bill });
 });
 
 // ─── POST /payments/bills/:id/pay — Pay a bill ───────────────────────────────
+// HMAC-signed: mobile must include X-Signature + X-Timestamp headers
 
-paymentsRouter.post('/bills/:id/pay', validate(payBillSchema), async (req: Request, res: Response) => {
+paymentsRouter.post('/bills/:id/pay', verifyHmac, validate(payBillSchema), async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const { paymentMethod, transactionId } = req.body as z.infer<typeof payBillSchema>;
 

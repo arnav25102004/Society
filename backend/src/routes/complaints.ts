@@ -4,11 +4,14 @@ import multer from 'multer';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { aiService, Priority } from '../services/ai.service';
 import { runAgent } from '../services/ai.agent';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
+import { decryptField } from '../utils/encryption';
+import { hasPermission } from '../utils/permissions';
 
 export const complaintsRouter = Router();
 complaintsRouter.use(requireAuth);
@@ -219,21 +222,44 @@ complaintsRouter.get('/:id', async (req: Request, res: Response) => {
   });
   if (!complaint) return res.status(404).json({ success: false, message: 'Complaint not found' });
 
-  // Check membership
+  // RBAC: residents can only read their own complaint or flat-mates'; committee can read all
+  const canRead = await hasPermission(userId, 'complaint', 'read', {
+    societyId: complaint.societyId,
+    ownerId: complaint.raisedById,
+    flatNumber: complaint.flatNumber,
+  });
+  if (!canRead) return res.status(403).json({ success: false, message: 'Access denied' });
+
   const member = await prisma.societyMember.findFirst({
     where: { userId, societyId: complaint.societyId, status: 'approved' },
   });
-  if (!member) return res.status(403).json({ success: false, message: 'Access denied' });
 
   // Build Swiggy-style tracker steps
   const tracker = buildTracker(complaint);
 
-  res.json({ success: true, complaint, tracker });
+  // Sign photo URLs and decrypt sensitive fields
+  const signedPhotos = await Promise.all(complaint.photos.map(p => storageService.getSignedUrl(p)));
+
+  res.json({
+    success: true,
+    complaint: {
+      ...complaint,
+      photos: signedPhotos,
+      raisedBy: complaint.raisedBy
+        ? { ...complaint.raisedBy, phone: decryptField(complaint.raisedBy.phone) }
+        : null,
+      assignedTo: complaint.assignedTo
+        ? { ...complaint.assignedTo, phone: decryptField((complaint.assignedTo as any).phone) }
+        : null,
+    },
+    tracker,
+  });
 });
 
 // ─── PUT /complaints/:id/status — Committee updates status ────────────────────
+// HMAC-signed: mobile must include X-Signature + X-Timestamp headers
 
-complaintsRouter.put('/:id/status', validate(updateStatusSchema), async (req: Request, res: Response) => {
+complaintsRouter.put('/:id/status', verifyHmac, validate(updateStatusSchema), async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const { id } = req.params;
   const { status, assignedToId, resolutionNote } = req.body as z.infer<typeof updateStatusSchema>;

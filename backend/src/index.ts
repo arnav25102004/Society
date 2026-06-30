@@ -4,6 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import path from 'path';
 
@@ -22,32 +23,56 @@ import { sosRouter } from './routes/sos';
 import { expensesRouter } from './routes/expenses';
 import { knowledgeRouter } from './routes/knowledge';
 import { agreementsRouter } from './routes/agreements';
+import { privacyRouter } from './routes/privacy';
+import { securityAdminRouter } from './routes/security-admin';
 import { errorHandler } from './middleware/errorHandler';
+import { csrfTokenRoute } from './middleware/csrf';
+import './workers/cleanup.worker';  // register cron jobs on startup
 
 const app = express();
 const httpServer = createServer(app);
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet({ crossOriginResourcePolicy: false })); // Allow loading images from other domains in dev
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow all origins in dev, or specific ones in prod
-      if (!origin || env.isDev) {
-        callback(null, true);
-      } else {
-        const allowed = [env.CORS_ORIGIN];
-        if (allowed.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(new Error('Not allowed by CORS'));
-        }
-      }
+// ─── Security headers (Helmet) ────────────────────────────────────────────────
+app.use(helmet({
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: { action: 'deny' },
+  noSniff: true,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      scriptSrc: ["'none'"],
+      styleSrc: ["'none'"],
+      imgSrc: ["'none'"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'none'"],
     },
-    credentials: true,
-  })
-);
+  },
+  crossOriginEmbedderPolicy: true,
+  crossOriginResourcePolicy: false,  // allow images from R2/CDN to load in app
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: env.isDev ? '*' : env.CORS_ORIGIN,
+  credentials: !env.isDev,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Device-ID',
+    'X-Signature',
+    'X-Timestamp',
+    'X-Action-Token',
+  ],
+}));
 app.use(compression());
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 if (env.NODE_ENV !== 'test') app.use(morgan('dev'));
@@ -63,6 +88,9 @@ app.get('/health', (_req, res) => {
 });
 
 // ─── API Routes ──────────────────────────────────────────────────────────────
+// CSRF token endpoint for web dashboard (Phase 4) — mobile clients don't need this
+app.get('/api/v1/csrf-token', csrfTokenRoute);
+
 app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/societies', societiesRouter);
 app.use('/api/v1/complaints', complaintsRouter);
@@ -75,6 +103,8 @@ app.use('/api/v1/sos', sosRouter);
 app.use('/api/v1/expenses', expensesRouter);
 app.use('/api/v1/knowledge', knowledgeRouter);
 app.use('/api/v1/agreements', agreementsRouter);
+app.use('/api/v1/privacy', privacyRouter);
+app.use('/api/v1/security', securityAdminRouter);
 
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {

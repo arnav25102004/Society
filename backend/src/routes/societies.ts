@@ -5,6 +5,7 @@ import { customAlphabet } from 'nanoid';
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../config/db';
+import { encryptSearchable, encryptField, decryptField } from '../utils/encryption';
 
 export const societiesRouter = Router();
 societiesRouter.use(requireAuth);
@@ -125,12 +126,12 @@ societiesRouter.post('/join', validate(joinSocietySchema), async (req: Request, 
       success: true,
       alreadyMember: true,
       member: {
-        id: existing.id,
-        societyId: society.id,
+        id:          existing.id,
+        societyId:   society.id,
         societyName: society.name,
-        flatNumber: existing.flatNumber,
-        role: existing.role,
-        status: existing.status,
+        flatNumber:  decryptField(existing.flatNumber),
+        role:        existing.role,
+        status:      existing.status,
       },
     });
   }
@@ -145,7 +146,7 @@ societiesRouter.post('/join', validate(joinSocietySchema), async (req: Request, 
     data: {
       userId,
       societyId: society.id,
-      flatNumber,
+      flatNumber: encryptSearchable(flatNumber),
       role,
       status: 'pending', // Requires committee approval
     },
@@ -159,7 +160,7 @@ societiesRouter.post('/join', validate(joinSocietySchema), async (req: Request, 
       status: member.status,
       societyId: society.id,
       societyName: society.name,
-      flatNumber: member.flatNumber,
+      flatNumber,  // return raw to client
       role: member.role,
     },
   });
@@ -203,7 +204,12 @@ societiesRouter.get('/:id/members', async (req: Request, res: Response) => {
     orderBy: { joinedAt: 'desc' },
   });
 
-  res.json({ success: true, members });
+  const membersDecrypted = members.map(m => ({
+    ...m,
+    flatNumber: decryptField(m.flatNumber),
+    user: { ...m.user, phone: decryptField(m.user.phone) },
+  }));
+  res.json({ success: true, members: membersDecrypted });
 });
 
 // ─── PUT /societies/:id/members/:memberId/approve ─────────────────────────────
@@ -253,6 +259,12 @@ societiesRouter.put('/:id/members/:memberId/reject', async (req: Request, res: R
 societiesRouter.patch('/me/profile', validate(updateProfileSchema), async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const data = req.body as z.infer<typeof updateProfileSchema>;
-  const user = await prisma.user.update({ where: { id: userId }, data });
-  res.json({ success: true, user: { id: user.id, name: user.name, email: user.email } });
+  const updateData: { name?: string; email?: string } = {};
+  if (data.name)  updateData.name  = data.name;
+  if (data.email) updateData.email = encryptField(data.email);  // email encrypted at rest
+  const user = await prisma.user.update({ where: { id: userId }, data: updateData });
+  res.json({
+    success: true,
+    user: { id: user.id, name: user.name, email: user.email ? decryptField(user.email) : null },
+  });
 });

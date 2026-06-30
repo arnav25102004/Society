@@ -204,4 +204,9 @@ export const notificationService = {
       channelId: 'emergency',
     });
   },
+
+  async sendToTokens(tokens: string[], title: string, body: string, data?: Record<string, unknown>) {
+    if (!tokens.length) return;
+    await send({ to: tokens, title, body, data, sound: 'default', priority: 'high', channelId: 'security' });
+  },
 };

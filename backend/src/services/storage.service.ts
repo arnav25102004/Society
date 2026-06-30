@@ -103,6 +103,33 @@ export const storageService = {
   },
 
   /**
+   * Generate a pre-signed URL for reading a private S3/R2 object (1-hour expiry).
+   * In local dev: returns the same URL unchanged (files are served publicly anyway).
+   *
+   * Apply to: visitor photos, complaint attachments, user avatars.
+   */
+  async getSignedUrl(fileUrl: string, expiresInSeconds = 3600): Promise<string> {
+    if (!fileUrl) return fileUrl;
+    if (env.storage.provider === 'local') return fileUrl;  // no signing needed in dev
+
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    const s3 = await getS3Client();
+
+    // Extract the S3 key from the stored URL
+    let key: string;
+    try {
+      const url = new URL(fileUrl);
+      key = url.pathname.replace(/^\//, '');
+    } catch {
+      key = fileUrl;
+    }
+
+    const command = new GetObjectCommand({ Bucket: env.storage.s3Bucket, Key: key });
+    return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+  },
+
+  /**
    * Delete a file by its public URL.
    * Silently ignores missing files (idempotent).
    */

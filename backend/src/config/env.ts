@@ -33,6 +33,17 @@ export const env = {
     refreshSecret: get('JWT_REFRESH_SECRET', 'dev-refresh-secret-societyhub-local-only'),
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '7d',   // longer in dev for convenience
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '30d',
+    // RS256 keys — if not set in dev, jwt.service generates ephemeral keys at startup
+    privateKeyB64: process.env.JWT_PRIVATE_KEY ?? '',
+    publicKeyB64: process.env.JWT_PUBLIC_KEY ?? '',
+    keyId: process.env.JWT_KEY_ID ?? 'v1',
+  },
+
+  security: {
+    pinPepper: get('PIN_PEPPER', 'dev-pin-pepper-societyhub-local-only-32chars!!'),
+    hmacSecret: get('HMAC_SECRET', 'dev-hmac-secret-societyhub-local-only-64chars-padding-here!!'),
+    superAdminSecret: get('SUPER_ADMIN_SECRET', 'dev-super-admin-secret-societyhub-local-only-64chars!!'),
+    aesEncryptionKey: get('AES_ENCRYPTION_KEY', 'HWZsZLh0XXZK4+Kck96jyUKX/mGLHlfCNd0GFdrGTF8='),
   },
 
   otp: {
