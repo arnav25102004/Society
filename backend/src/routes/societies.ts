@@ -18,8 +18,9 @@ const createSocietySchema = z.object({
   city: z.string().min(2).max(100),
   state: z.string().min(2).max(100),
   pincode: z.string().regex(/^\d{6}$/, 'Enter a valid 6-digit pincode'),
-  totalFlats: z.number().int().min(1).max(10000),
+  totalFlats: z.coerce.number().int().min(1).max(10000),
 });
+
 
 const joinSocietySchema = z.object({
   societyCode: z.string().length(8, 'Society code must be 8 characters').toUpperCase(),
