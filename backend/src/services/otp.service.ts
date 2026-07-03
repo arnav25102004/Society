@@ -21,7 +21,8 @@ export const otpService = {
       const attemptsKey = `${OTP_ATTEMPT_PREFIX}${phone}`;
       const attempts = await redis.incr(attemptsKey);
       if (attempts === 1) await redis.expire(attemptsKey, 3600);
-      if (attempts > MAX_ATTEMPTS_PER_HOUR) {
+      const maxAttempts = env.isDev ? 1000 : MAX_ATTEMPTS_PER_HOUR;
+      if (attempts > maxAttempts) {
         return { success: false, message: 'Too many OTP requests. Try again in an hour.' };
       }
 

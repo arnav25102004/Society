@@ -25,7 +25,7 @@ const REFRESH_EXPIRY_MS  = 7 * 24 * 60 * 60 * 1000;
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: env.isDev ? 1000 : 20,
   message: { success: false, message: 'Too many requests, please try again later.' },
 });
 authRouter.use(authLimiter);
@@ -80,6 +80,110 @@ const setPinSchema = z.object({
 const verifyPinSchema = z.object({
   pin: z.string().length(6).regex(/^\d{6}$/),
 });
+
+const adminLoginSchema = z.object({
+  phone: z.string().regex(/^[6-9]\d{9}$/),
+  pin:   z.string().length(6).regex(/^\d{6}$/),
+});
+
+const superAdminLoginSchema = z.object({
+  superAdminSecret: z.string().min(1),
+});
+
+// ─── POST /auth/admin/login — Society Admin PIN-based login ───────────────────
+
+authRouter.post('/admin/login', validate(adminLoginSchema), async (req: Request, res: Response) => {
+  const { phone, pin } = req.body as z.infer<typeof adminLoginSchema>;
+  const encryptedPhone = encryptSearchable(phone);
+
+  // Find user
+  const user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
+  if (!user) {
+    return res.status(401).json({ success: false, message: 'Invalid credentials' });
+  }
+
+  // Verify PIN
+  if (!user.pinHash) {
+    return res.status(400).json({ success: false, message: 'No security PIN set. Please configure a PIN in the mobile app first.' });
+  }
+
+  const pepperedPin = pin + env.security.pinPepper;
+  const matches = await bcrypt.compare(pepperedPin, user.pinHash);
+  if (!matches) {
+    return res.status(401).json({ success: false, message: 'Incorrect security PIN' });
+  }
+
+  // Get memberships
+  const memberships = await prisma.societyMember.findMany({
+    where:   { userId: user.id },
+    include: { society: { select: { id: true, name: true, city: true } } },
+  });
+
+  // Issue tokens
+  const familyId = uuidv4();
+  const tokenId  = uuidv4();
+  const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_MS);
+  
+  const accessToken = jwtService.signAccessToken({ userId: user.id, phone });
+  const refreshToken = jwtService.signRefreshToken({ userId: user.id, tokenId });
+  const tokenHash    = hashToken(refreshToken);
+
+  await prisma.refreshTokenFamily.create({
+    data: { familyId, userId: user.id, tokenHash, expiresAt },
+  });
+
+  res.json({
+    success: true,
+    tokens: { accessToken, refreshToken },
+    user: {
+      id:        user.id,
+      phone,
+      name:      user.name,
+      avatarUrl: user.avatarUrl,
+      hasPinSet: true,
+    },
+    memberships: memberships.map(m => ({
+      id:          m.id,
+      societyId:   m.societyId,
+      societyName: m.society.name,
+      societyCity: m.society.city,
+      flatNumber:  m.flatNumber,
+      role:        m.role,
+      status:      m.status,
+    })),
+  });
+});
+
+// ─── POST /auth/super-admin/login — Super admin login (Secret-key based) ─────────
+
+authRouter.post('/super-admin/login', validate(superAdminLoginSchema), async (req: Request, res: Response) => {
+  const { superAdminSecret } = req.body as z.infer<typeof superAdminLoginSchema>;
+
+  // Validate the super admin secret
+  if (superAdminSecret !== env.security.superAdminSecret) {
+    return res.status(403).json({ success: false, message: 'Invalid super admin secret password' });
+  }
+
+  // Find or create the super admin user
+  const systemAdminPhone = '0000000000';
+  const encryptedPhone = encryptSearchable(systemAdminPhone);
+  let user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
+  if (!user) {
+    user = await prisma.user.create({
+      data: { phone: encryptedPhone, name: 'Super Admin HQ', updatedAt: new Date() },
+    });
+  }
+
+  // Issue a long-lived access token with superadmin role (8h for dashboard sessions)
+  const accessToken = jwtService.signAccessToken({ userId: user.id, phone: `+91${systemAdminPhone}`, role: 'superadmin' });
+
+  res.json({
+    success: true,
+    accessToken,
+    user: { id: user.id, name: user.name, role: 'superadmin' },
+  });
+});
+
 
 // ─── POST /auth/send-otp ──────────────────────────────────────────────────────
 

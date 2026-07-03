@@ -26,6 +26,12 @@ export function verifyHmac(req: Request, res: Response, next: NextFunction) {
   const signature = req.headers['x-signature'] as string | undefined;
   const timestampStr = req.headers['x-timestamp'] as string | undefined;
 
+  // Web dashboard bypass: if user is authenticated with admin/committee/superadmin role, skip HMAC
+  const authUser = (req as any).user;
+  if (authUser && ['admin', 'committee', 'superadmin'].includes(authUser.role)) {
+    return next();
+  }
+
   if (!signature || !timestampStr) {
     return res.status(401).json({
       success: false,
