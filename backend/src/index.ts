@@ -25,6 +25,7 @@ import { knowledgeRouter } from './routes/knowledge';
 import { agreementsRouter } from './routes/agreements';
 import { privacyRouter } from './routes/privacy';
 import { securityAdminRouter } from './routes/security-admin';
+import { superAdminRouter } from './routes/super-admin';
 import { errorHandler } from './middleware/errorHandler';
 import { csrfTokenRoute } from './middleware/csrf';
 import './workers/cleanup.worker';  // register cron jobs on startup
@@ -105,6 +106,7 @@ app.use('/api/v1/knowledge', knowledgeRouter);
 app.use('/api/v1/agreements', agreementsRouter);
 app.use('/api/v1/privacy', privacyRouter);
 app.use('/api/v1/security', securityAdminRouter);
+app.use('/api/v1/super-admin', superAdminRouter);
 
 // ─── 404 ─────────────────────────────────────────────────────────────────────
 app.use((_req, res) => {
