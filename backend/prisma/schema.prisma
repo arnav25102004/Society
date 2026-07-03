@@ -154,13 +154,13 @@ model Society {
 
 model User {
   id             String   @id @default(uuid())
-  phone          String   @unique @db.VarChar(15)
+  phone          String   @unique @db.VarChar(500)
   name           String   @db.VarChar(200)
   email          String?  @db.VarChar(255)
   avatarUrl      String?
   expoPushToken  String?
-  pinHash        String?  @db.VarChar(100)
-  isDeleted      Boolean  @default(false)
+  pinHash        String?  @db.VarChar(100) @map("pin_hash")
+  isDeleted      Boolean  @default(false)  @map("is_deleted")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -193,7 +193,7 @@ model SocietyMember {
   id         String       @id @default(uuid())
   userId     String
   societyId  String
-  flatNumber String       @db.VarChar(20)
+  flatNumber String       @db.VarChar(500)
   role       MemberRole
   status     MemberStatus @default(pending)
   joinedAt   DateTime     @default(now())
@@ -238,7 +238,7 @@ model RefreshTokenFamily {
 
 model LoginAttempt {
   id            String    @id @default(uuid())
-  phone         String    @unique @db.VarChar(15)
+  phone         String    @unique @db.VarChar(500)
   attemptCount  Int       @default(0)
   lastAttemptAt DateTime  @default(now())
   lockedUntil   DateTime?
@@ -270,7 +270,7 @@ model ConsentRecord {
   consentType   ConsentType
   consentedAt   DateTime    @default(now())
   ipAddress     String?     @db.VarChar(45)
-  policyVersion String      @db.VarChar(20) @default("1.0")
+  policyVersion String      @db.VarChar(500) @default("1.0")
   revokedAt     DateTime?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -283,7 +283,7 @@ model Complaint {
   id             String            @id @default(uuid())
   societyId      String
   raisedById     String
-  flatNumber     String            @db.VarChar(20)
+  flatNumber     String            @db.VarChar(500)
   category       String            @db.VarChar(50)
   priority       ComplaintPriority @default(medium)
   title          String            @db.VarChar(300)
@@ -311,7 +311,7 @@ model Complaint {
 model MaintenanceBill {
   id          String     @id @default(uuid())
   societyId   String
-  flatNumber  String     @db.VarChar(20)
+  flatNumber  String     @db.VarChar(500)
   billMonth   DateTime
   amount      Decimal    @db.Decimal(10, 2)
   lateFee     Decimal    @default(0) @db.Decimal(10, 2)
@@ -354,9 +354,9 @@ model Payment {
 model Visitor {
   id            String         @id @default(uuid())
   societyId     String
-  flatNumber    String         @db.VarChar(20)
+  flatNumber    String         @db.VarChar(500)
   visitorName   String         @db.VarChar(200)
-  visitorPhone  String?        @db.VarChar(15)
+  visitorPhone  String?        @db.VarChar(500)
   visitorPhoto  String?
   purpose       VisitorPurpose
   companyName   String?        @db.VarChar(100)
@@ -380,9 +380,9 @@ model PreApproval {
   id           String   @id @default(uuid())
   societyId    String
   userId       String
-  flatNumber   String   @db.VarChar(20)
+  flatNumber   String   @db.VarChar(500)
   visitorName  String   @db.VarChar(200)
-  visitorPhone String?  @db.VarChar(15)
+  visitorPhone String?  @db.VarChar(500)
   schedule     Json?
   validFrom    DateTime
   validUntil   DateTime?
@@ -519,7 +519,7 @@ model SosAlert {
   id           String    @id @default(uuid())
   societyId    String
   userId       String
-  flatNumber   String    @db.VarChar(20)
+  flatNumber   String    @db.VarChar(500)
   message      String?   @db.VarChar(500)
   status       SosStatus @default(active)
   respondedById String?
@@ -609,7 +609,7 @@ model Agreement {
   createdById String
   type        AgreementType
   status      AgreementStatus @default(draft)
-  flatNumber  String          @db.VarChar(20)
+  flatNumber  String          @db.VarChar(500)
   inputs      Json
   content     String
   createdAt   DateTime        @default(now())
