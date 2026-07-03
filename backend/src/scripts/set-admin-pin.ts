@@ -9,23 +9,23 @@ async function setAdminPin() {
   const pin = '123456';
   
   const encryptedPhone = encryptSearchable(phone);
-  const user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
   
-  if (!user) {
-    console.error(`User with phone ${phone} not found in database.`);
-    process.exit(1);
-  }
-
   const pepperedPin = pin + env.security.pinPepper;
   const pinHash = await bcrypt.hash(pepperedPin, 12);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { pinHash },
+  const user = await prisma.user.upsert({
+    where: { phone: encryptedPhone },
+    update: { pinHash },
+    create: {
+      phone: encryptedPhone,
+      name: 'Admin User',
+      pinHash,
+    },
   });
 
   console.log(`\n✅ Successfully set PIN to "${pin}" for admin user (+91${phone}).\n`);
   process.exit(0);
+
 }
 
 setAdminPin().catch((err) => {
