@@ -31,9 +31,12 @@ import { csrfTokenRoute } from './middleware/csrf';
 import './workers/cleanup.worker';  // register cron jobs on startup
 
 const app = express();
+app.set('trust proxy', 1); // Trust Render's reverse proxy for rate limiting
 const httpServer = createServer(app);
 
 // ─── Security headers (Helmet) ────────────────────────────────────────────────
+
+
 app.use(helmet({
   hsts: {
     maxAge: 31536000,
