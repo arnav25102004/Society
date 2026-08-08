@@ -7,6 +7,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
 import { api } from '../../services/api';
+import { signRequest } from '../../services/hmac';
 
 const PURPOSE_ICON: Record<string, string> = {
   delivery: 'package-variant-closed',
@@ -60,7 +61,8 @@ export function GateScreen({ navigation }: any) {
   async function handleApprove(visitorId: string) {
     setActionLoading(true);
     try {
-      await api.put(`/visitors/${visitorId}/approve`);
+      const headers = await signRequest({});
+      await api.put(`/visitors/${visitorId}/approve`, {}, { headers });
       setSelectedVisitor(null);
       loadVisitors();
       Alert.alert('Approved', 'Visitor has been allowed entry.');

@@ -20,7 +20,6 @@ export function PaymentsScreen({ navigation }: any) {
   const [bills, setBills] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [payingId, setPayingId] = useState<string | null>(null);
 
   const loadBills = useCallback(async () => {
     if (!activeMembership?.societyId) return;
@@ -37,28 +36,10 @@ export function PaymentsScreen({ navigation }: any) {
 
   useEffect(() => { loadBills(); }, [loadBills]);
 
-  async function handlePay(bill: any) {
+  function showPayInfo() {
     Alert.alert(
-      'Pay Maintenance',
-      `Pay ₹${Number(bill.totalAmount).toLocaleString('en-IN')} via UPI?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pay Now',
-          onPress: async () => {
-            setPayingId(bill.id);
-            try {
-              await api.post(`/payments/bills/${bill.id}/pay`, { paymentMethod: 'upi' });
-              Alert.alert('Payment Successful!', 'Receipt has been generated.');
-              loadBills();
-            } catch (err: any) {
-              Alert.alert('Payment Failed', err?.response?.data?.message ?? 'Please try again.');
-            } finally {
-              setPayingId(null);
-            }
-          },
-        },
-      ]
+      'How to Pay',
+      'Online payment isn’t available yet. Please pay your committee/admin directly (cash, UPI, or bank transfer). They will mark your bill as paid once received.',
     );
   }
 
@@ -86,6 +67,13 @@ export function PaymentsScreen({ navigation }: any) {
           <MaterialCommunityIcons name="alert-circle-outline" size={32} color="#fff" />
         </View>
       )}
+
+      <View style={styles.infoBanner}>
+        <MaterialCommunityIcons name="information-outline" size={18} color={Colors.textSecondary} />
+        <Text style={styles.infoText}>
+          Online payment isn’t available yet. Pay your committee/admin directly — they’ll mark your bill as paid.
+        </Text>
+      </View>
 
       <FlatList
         data={bills}
@@ -127,19 +115,9 @@ export function PaymentsScreen({ navigation }: any) {
               {bill.notes && <Text style={styles.notes}>{bill.notes}</Text>}
 
               {bill.status !== 'paid' && (
-                <Pressable
-                  style={[styles.payBtn, payingId === bill.id && styles.payBtnDisabled]}
-                  onPress={() => handlePay(bill)}
-                  disabled={payingId === bill.id}
-                >
-                  {payingId === bill.id ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <MaterialCommunityIcons name="cash-fast" size={18} color="#fff" />
-                      <Text style={styles.payBtnText}>Pay via UPI</Text>
-                    </>
-                  )}
+                <Pressable style={styles.payBtn} onPress={showPayInfo}>
+                  <MaterialCommunityIcons name="information-outline" size={18} color="#fff" />
+                  <Text style={styles.payBtnText}>How to Pay</Text>
                 </Pressable>
               )}
 
@@ -169,6 +147,12 @@ const styles = StyleSheet.create({
   },
   dueLabel: { color: 'rgba(255,255,255,0.8)', fontSize: FontSizes.sm },
   dueAmount: { color: '#fff', fontSize: FontSizes.xxl, fontWeight: '800' },
+  infoBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: Colors.surface, padding: Spacing.md,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  infoText: { flex: 1, fontSize: FontSizes.xs, color: Colors.textSecondary },
   listContent: { padding: Spacing.md, gap: Spacing.sm, paddingBottom: 32 },
   billCard: {
     backgroundColor: Colors.surface, borderRadius: Radius.md,
@@ -190,7 +174,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary, borderRadius: Radius.md,
     paddingVertical: Spacing.sm + 2, marginTop: 4,
   },
-  payBtnDisabled: { opacity: 0.6 },
   payBtnText: { color: '#fff', fontWeight: '700', fontSize: FontSizes.md },
   paidRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   paidText: { fontSize: FontSizes.xs, color: Colors.secondary, fontWeight: '600' },
