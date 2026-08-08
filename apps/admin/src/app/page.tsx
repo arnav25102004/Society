@@ -93,7 +93,7 @@ export default function LoginPage() {
         <div className="logo-section">
           <div className="logo-glow"></div>
           <Sparkles className="logo-icon" size={32} />
-          <h2>Society<span>Hub</span></h2>
+          <h2>Urban<span>Hub</span></h2>
           <p className="subtitle">Portal Access Management</p>
         </div>
 
