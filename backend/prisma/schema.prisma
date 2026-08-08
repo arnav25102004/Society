@@ -168,6 +168,7 @@ model User {
   complaintsRaised      Complaint[]           @relation("ComplaintRaisedBy")
   complaintsAssigned    Complaint[]           @relation("ComplaintAssignedTo")
   payments              Payment[]
+  paymentsRecorded      Payment[]             @relation("PaymentRecordedBy")
   visitorApprovals      Visitor[]             @relation("VisitorApprovedBy")
   visitorGuard          Visitor[]             @relation("VisitorGuard")
   preApprovals          PreApproval[]
@@ -342,10 +343,13 @@ model Payment {
   status        PaymentStatus @default(pending)
   paidAt        DateTime?
   createdAt     DateTime      @default(now())
+  recordedByUserId String?    // committee/admin who recorded this offline payment (v1: no gateway)
+  notes         String?
 
   bill    MaintenanceBill? @relation(fields: [billId], references: [id])
   user    User             @relation(fields: [userId], references: [id])
   society Society          @relation(fields: [societyId], references: [id])
+  recordedBy User?          @relation("PaymentRecordedBy", fields: [recordedByUserId], references: [id])
 
   @@index([userId, createdAt])
   @@map("payments")
