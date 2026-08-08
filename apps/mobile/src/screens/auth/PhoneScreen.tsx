@@ -32,8 +32,8 @@ export function PhoneScreen({ navigation }: Props) {
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.hero}>
-          <View style={styles.logoCircle}><Text style={styles.logoText}>S</Text></View>
-          <Text style={styles.appName}>SocietyHub</Text>
+          <View style={styles.logoCircle}><Text style={styles.logoText}>U</Text></View>
+          <Text style={styles.appName}>Urban Hub</Text>
           <Text style={styles.tagline}>Your society, smarter.</Text>
         </View>
         <View style={styles.card}>

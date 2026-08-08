@@ -22,9 +22,28 @@ import { MarketplaceScreen } from '../screens/marketplace/MarketplaceScreen';
 import { AmenityBookingScreen } from '../screens/amenities/AmenityBookingScreen';
 import { SOSScreen } from '../screens/sos/SOSScreen';
 import { ExpenseDashboardScreen } from '../screens/expenses/ExpenseDashboardScreen';
+import { GuardHomeScreen } from '../screens/guard/GuardHomeScreen';
+import { RegisterVisitorScreen } from '../screens/guard/RegisterVisitorScreen';
+import { DeleteAccountScreen } from '../screens/settings/DeleteAccountScreen';
 
 const RootStack = createNativeStackNavigator();
+const GuardStack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator<AppTabParamList>();
+
+// Guards get a simplified, camera-first flow instead of the resident tab bar —
+// they only ever need to register visitors and mark exits, not complaints/bills/etc.
+function GuardNavigator() {
+  return (
+    <GuardStack.Navigator screenOptions={{ headerShown: false }}>
+      <GuardStack.Screen name="GuardHome" component={GuardHomeScreen} />
+      <GuardStack.Screen
+        name="RegisterVisitor"
+        component={RegisterVisitorScreen}
+        options={{ headerShown: true, title: 'Register Visitor', animation: 'slide_from_bottom', headerStyle: { backgroundColor: Colors.surface }, headerTintColor: Colors.textPrimary }}
+      />
+    </GuardStack.Navigator>
+  );
+}
 
 // More screen with links to all extra features
 function MoreScreen({ navigation }: any) {
@@ -119,6 +138,13 @@ function MoreScreen({ navigation }: any) {
           <MaterialCommunityIcons name="logout" size={22} color={Colors.textSecondary} />
         </View>
         <Text style={{ flex: 1, fontWeight: '600', color: Colors.textSecondary, fontSize: 15 }}>Sign Out</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() => navigation.navigate('DeleteAccount')}
+        style={{ alignItems: 'center', paddingVertical: 12, marginBottom: 32 }}
+      >
+        <Text style={{ color: Colors.error, fontWeight: '600', fontSize: 13 }}>Delete Account</Text>
       </Pressable>
     </ScrollView>
   );
@@ -230,6 +256,12 @@ function TabNavigator() {
 }
 
 export function AppNavigator() {
+  const { activeMembership } = useAuthStore();
+
+  if (activeMembership?.role === 'guard') {
+    return <GuardNavigator />;
+  }
+
   return (
     <RootStack.Navigator screenOptions={{ headerShown: false }}>
       <RootStack.Screen name="Tabs" component={TabNavigator} />
@@ -242,6 +274,7 @@ export function AppNavigator() {
       <RootStack.Screen name="AmenityBooking" component={AmenityBookingScreen} options={{ headerShown: true, title: 'Book Amenity', animation: 'slide_from_right', headerStyle: { backgroundColor: Colors.surface }, headerTintColor: Colors.textPrimary }} />
       <RootStack.Screen name="SOS" component={SOSScreen} options={{ headerShown: true, title: 'Emergency SOS', animation: 'slide_from_bottom', headerStyle: { backgroundColor: Colors.surface }, headerTintColor: Colors.error }} />
       <RootStack.Screen name="ExpenseDashboard" component={ExpenseDashboardScreen} options={{ headerShown: true, title: 'Society Expenses', animation: 'slide_from_right', headerStyle: { backgroundColor: Colors.surface }, headerTintColor: Colors.textPrimary }} />
+      <RootStack.Screen name="DeleteAccount" component={DeleteAccountScreen} options={{ headerShown: true, title: 'Delete Account', animation: 'slide_from_right', headerStyle: { backgroundColor: Colors.surface }, headerTintColor: Colors.textPrimary }} />
     </RootStack.Navigator>
   );
 }

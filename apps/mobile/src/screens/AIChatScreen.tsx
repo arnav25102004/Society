@@ -34,7 +34,7 @@ export function AIChatScreen({ navigation }: any) {
     {
       id: 'welcome',
       role: 'assistant',
-      content: `Hi ${user?.name?.split(' ')[0] ?? 'there'}! 👋 I'm SocietyBot, your 24/7 assistant for ${activeMembership?.societyName ?? 'your society'}.\n\nI can help you check dues, complaint status, announcements, and more. What would you like to know?`,
+      content: `Hi ${user?.name?.split(' ')[0] ?? 'there'}! 👋 I'm your 24/7 assistant for ${activeMembership?.societyName ?? 'your society'}.\n\nI can help you check dues, complaint status, announcements, and more. What would you like to know?`,
     },
   ]);
   const [input, setInput] = useState('');
@@ -96,7 +96,7 @@ export function AIChatScreen({ navigation }: any) {
             <Text style={styles.botAvatarText}>🤖</Text>
           </View>
           <View>
-            <Text style={styles.headerTitle}>SocietyBot</Text>
+            <Text style={styles.headerTitle}>Urban Hub Assistant</Text>
             <Text style={styles.headerSub}>{isTyping ? 'Typing…' : 'Always online'}</Text>
           </View>
         </View>
