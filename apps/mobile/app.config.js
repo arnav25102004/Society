@@ -14,22 +14,31 @@ try {
 
 const IS_PROD = process.env.NODE_ENV === 'production' || process.env.EAS_BUILD === '1';
 
-const API_URL = process.env.API_URL
-  ?? (IS_PROD
-    ? 'https://YOUR-APP.up.railway.app/api/v1'
-    : 'http://localhost:3002/api/v1');
+if (IS_PROD && !process.env.API_URL) {
+  throw new Error(
+    'API_URL is not set. Set it as an EAS secret (eas secret:create --name API_URL --value ...) before building for production.'
+  );
+}
+
+const API_URL = process.env.API_URL ?? 'http://localhost:3002/api/v1';
 
 const WS_URL = API_URL.replace('/api/v1', '').replace('https://', 'wss://').replace('http://', 'ws://');
 
 module.exports = {
   expo: {
-    name: 'SocietyHub',
+    name: 'Urban Hub',
     slug: 'societyhub',
     version: '1.0.0',
     sdkVersion: '54.0.0',
     orientation: 'portrait',
     userInterfaceStyle: 'light',
     assetBundlePatterns: ['**/*'],
+    icon: './assets/images/icon.png',
+    splash: {
+      image: './assets/images/splash-icon.png',
+      resizeMode: 'contain',
+      backgroundColor: '#0D1836',
+    },
     ios: {
       supportsTablet: false,
       bundleIdentifier: 'com.societyhub.app',
@@ -41,7 +50,8 @@ module.exports = {
     android: {
       package: 'com.societyhub.app',
       adaptiveIcon: {
-        backgroundColor: '#1A73E8',
+        foregroundImage: './assets/images/adaptive-icon.png',
+        backgroundColor: '#0D1836',
       },
       permissions: [
         'android.permission.CAMERA',
@@ -54,12 +64,15 @@ module.exports = {
         'android.permission.ACCESS_NETWORK_STATE',
       ],
     },
+    web: {
+      favicon: './assets/images/favicon.png',
+    },
     plugins: ['expo-secure-store', 'expo-font'],
     extra: {
       apiUrl: API_URL,
       wsUrl: WS_URL,
       eas: {
-        projectId: process.env.EAS_PROJECT_ID ?? '',
+        projectId: process.env.EAS_PROJECT_ID ?? 'a1382355-551b-49cd-98a6-eb5972024132',
       },
     },
   },
