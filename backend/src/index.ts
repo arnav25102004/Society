@@ -28,6 +28,7 @@ import { securityAdminRouter } from './routes/security-admin';
 import { superAdminRouter } from './routes/super-admin';
 import { errorHandler } from './middleware/errorHandler';
 import { csrfTokenRoute } from './middleware/csrf';
+import { metricsRegistry, httpRequestDuration, httpRequestsTotal } from './config/metrics';
 import './workers/cleanup.worker';  // register cron jobs on startup
 
 const app = express();
@@ -89,6 +90,27 @@ if (env.storage.provider === 'local') {
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', env: env.NODE_ENV });
+});
+
+// ─── Prometheus metrics ──────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    // req.baseUrl + req.route.path gives the matched pattern (e.g. /api/v1/payments/bills/:id)
+    // instead of the raw URL, so metric cardinality stays bounded regardless of how many
+    // distinct bill/complaint/visitor IDs get requested.
+    const route = req.route ? `${req.baseUrl}${req.route.path}` : `${req.baseUrl || req.path}`;
+    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+    const labels = { method: req.method, route, status_code: String(res.statusCode) };
+    httpRequestDuration.observe(labels, seconds);
+    httpRequestsTotal.inc(labels);
+  });
+  next();
+});
+
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', metricsRegistry.contentType);
+  res.end(await metricsRegistry.metrics());
 });
 
 // ─── API Routes ──────────────────────────────────────────────────────────────
