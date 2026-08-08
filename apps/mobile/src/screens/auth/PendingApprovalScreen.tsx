@@ -77,7 +77,7 @@ export function PendingApprovalScreen({ route }: Props) {
 
         <View style={styles.tipBox}>
           <Text style={styles.tipText}>
-            💡 Ask your society secretary to approve you in the SocietyHub committee panel.
+            💡 Ask your society secretary to approve you in the Urban Hub committee panel.
           </Text>
         </View>
       </View>
