@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import multer from 'multer';
+import { imageUpload as upload } from '../middleware/upload';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
@@ -9,8 +9,6 @@ import { storageService } from '../services/storage.service';
 
 export const expensesRouter = Router();
 expensesRouter.use(requireAuth);
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const createCategorySchema = z.object({
   societyId: z.string().uuid(),
