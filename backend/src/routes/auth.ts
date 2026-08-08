@@ -9,6 +9,7 @@ import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { otpService } from '../services/otp.service';
 import { jwtService } from '../services/jwt.service';
+import { hmacKeyService } from '../services/hmacKey.service';
 import { prisma } from '../config/db';
 import { env } from '../config/env';
 import { encryptSearchable, encryptField, decryptField } from '../utils/encryption';
@@ -79,6 +80,10 @@ const setPinSchema = z.object({
 
 const verifyPinSchema = z.object({
   pin: z.string().length(6).regex(/^\d{6}$/),
+});
+
+const otpActionTokenSchema = z.object({
+  otp: z.string().length(6, 'OTP must be 6 digits'),
 });
 
 const adminLoginSchema = z.object({
@@ -542,4 +547,34 @@ authRouter.post('/pin/verify', requireAuth, validate(verifyPinSchema), async (re
 
   const sensitiveActionToken = jwtService.signSensitiveActionToken(userId);
   res.json({ success: true, sensitiveActionToken });
+});
+
+// ─── POST /auth/otp-action-token ───────────────────────────────────────────────
+// Same purpose as /auth/pin/verify (issues a 5-min sensitive-action token) for users
+// who have never set a PIN — call POST /auth/send-otp first, then this with the code.
+// Verifies against the *authenticated* user's own phone, not an arbitrary one.
+
+authRouter.post('/otp-action-token', requireAuth, validate(otpActionTokenSchema), async (req: Request, res: Response) => {
+  const { userId, phone } = (req as AuthenticatedRequest).user;
+  const { otp } = req.body as z.infer<typeof otpActionTokenSchema>;
+
+  const valid = await otpService.verify(phone, otp);
+  if (!valid) {
+    return res.status(401).json({ success: false, message: 'Invalid or expired OTP' });
+  }
+
+  const sensitiveActionToken = jwtService.signSensitiveActionToken(userId);
+  res.json({ success: true, sensitiveActionToken });
+});
+
+// ─── POST /auth/signing-key ────────────────────────────────────────────────────
+// Issues a short-lived per-user HMAC signing key so the mobile client can sign
+// state-changing requests (visitor approve/reject, complaint status) without a
+// static secret ever being shipped inside the app bundle. Fetch this right before
+// the signed call — it expires in 5 minutes, same lifetime as the PIN action token.
+
+authRouter.post('/signing-key', requireAuth, async (req: Request, res: Response) => {
+  const { userId } = (req as AuthenticatedRequest).user;
+  const { key, expiresInSeconds } = await hmacKeyService.issue(userId);
+  res.json({ success: true, key, expiresInSeconds });
 });
