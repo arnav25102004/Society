@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: societyhub_backend
+    metrics_path: /metrics
+    static_configs:
+      # host.docker.internal resolves to the Docker host — the backend runs on
+      # the host via `npm run dev`, not as a compose service (see docker-compose.yml).
+      # In production, point this at the backend's actual hostname instead.
+      - targets: ['host.docker.internal:3000']
