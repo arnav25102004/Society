@@ -13,6 +13,45 @@ function sendViaConsole(phone: string, otp: string): void {
   console.log(`\n📱 OTP for +91${phone}: ${otp}\n`);
 }
 
+// Fast2SMS "OTP route" — no DLT template registration required to get started.
+// https://docs.fast2sms.com/#otp-message-route
+async function sendViaFast2Sms(phone: string, otp: string): Promise<void> {
+  const res = await fetch('https://www.fast2sms.com/dev/bulkV2', {
+    method: 'POST',
+    headers: {
+      authorization: env.otp.fast2smsApiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      route: 'otp',
+      variables_values: otp,
+      numbers: phone,
+    }),
+  });
+
+  const data = (await res.json().catch(() => null)) as { return?: boolean; message?: unknown } | null;
+  if (!res.ok || !data?.return) {
+    throw new Error(`Fast2SMS send failed: ${res.status} ${JSON.stringify(data?.message ?? data)}`);
+  }
+}
+
+// MSG91 requires a DLT-registered template; msg91TemplateId must reference that template
+// and the template text must contain a ##OTP## (or equivalent) placeholder.
+// https://docs.msg91.com/p/tf9GTextN/e/tdKQ0Sydx9/MSG91
+async function sendViaMsg91(phone: string, otp: string): Promise<void> {
+  const url = new URL('https://control.msg91.com/api/v5/otp');
+  url.searchParams.set('otp', otp);
+  url.searchParams.set('mobile', `91${phone}`);
+  url.searchParams.set('template_id', env.otp.msg91TemplateId);
+  url.searchParams.set('authkey', env.otp.msg91AuthKey);
+
+  const res = await fetch(url.toString(), { method: 'POST' });
+  const data = (await res.json().catch(() => null)) as { type?: string; message?: string } | null;
+  if (!res.ok || data?.type !== 'success') {
+    throw new Error(`MSG91 send failed: ${res.status} ${JSON.stringify(data)}`);
+  }
+}
+
 // ─── Main OTP service ─────────────────────────────────────────────────────────
 export const otpService = {
   async send(phone: string): Promise<{ success: boolean; message: string }> {
@@ -30,8 +69,18 @@ export const otpService = {
       const key = `${OTP_PREFIX}${phone}`;
       await redis.setex(key, env.otp.expirySeconds, otp);
 
-      // Dev only — OTP visible in server terminal
-      sendViaConsole(phone, otp);
+      switch (env.otp.provider) {
+        case 'fast2sms':
+          await sendViaFast2Sms(phone, otp);
+          break;
+        case 'msg91':
+          await sendViaMsg91(phone, otp);
+          break;
+        case 'console':
+        default:
+          // Dev only — OTP visible in server terminal, never actually texted
+          sendViaConsole(phone, otp);
+      }
 
       return { success: true, message: 'OTP sent successfully' };
     } catch (err: any) {

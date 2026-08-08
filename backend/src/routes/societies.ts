@@ -1,11 +1,27 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { customAlphabet } from 'nanoid';
+import { parse as parseCsv } from 'csv-parse/sync';
+import multer from 'multer';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../config/db';
 import { encryptSearchable, encryptField, decryptField } from '../utils/encryption';
+
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1 * 1024 * 1024 }, // 1MB is plenty for a few hundred rows
+  fileFilter: (_req, file, cb) => {
+    if (!/\.csv$/i.test(file.originalname)) {
+      const err = new Error('Only .csv files are accepted') as Error & { status: number };
+      err.status = 400;
+      cb(err);
+      return;
+    }
+    cb(null, true);
+  },
+});
 
 export const societiesRouter = Router();
 societiesRouter.use(requireAuth);
@@ -254,6 +270,122 @@ societiesRouter.put('/:id/members/:memberId/reject', async (req: Request, res: R
 
   res.json({ success: true, member });
 });
+
+// ─── POST /societies/:id/members/bulk-import — CSV bulk member import ─────────
+// Admin/committee uploads a CSV (columns: flatNumber, name, phone, role) to pre-register
+// a whole society at once instead of every resident self-registering and waiting for
+// individual approval. Each row creates (or reuses) a User keyed by phone, and a
+// SocietyMember with status 'approved' directly — when that phone number later verifies
+// OTP for the first time (existing /auth/verify-otp flow), it finds this same User row
+// and the resident lands straight in the app, already approved.
+
+const csvRowSchema = z.object({
+  flatNumber: z.string().trim().min(1).max(20),
+  name: z.string().trim().min(2).max(200),
+  phone: z.string().trim().regex(/^[6-9]\d{9}$/, 'Phone must be a 10-digit Indian mobile number'),
+  role: z.enum(['owner', 'tenant']).default('owner'),
+});
+
+interface RowResult {
+  row: number;
+  flatNumber: string;
+  phone: string;
+  status: 'created' | 'already_member' | 'error';
+  message?: string;
+}
+
+societiesRouter.post(
+  '/:id/members/bulk-import',
+  csvUpload.single('file'),
+  async (req: Request, res: Response) => {
+    const { userId } = (req as AuthenticatedRequest).user;
+    const { id: societyId } = req.params;
+
+    const myMembership = await prisma.societyMember.findFirst({
+      where: { userId, societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
+    });
+    if (!myMembership) {
+      return res.status(403).json({ success: false, message: 'Committee access required' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'CSV file required (field name: file)' });
+    }
+
+    let records: Record<string, string>[];
+    try {
+      records = parseCsv(req.file.buffer, { columns: true, skip_empty_lines: true, trim: true });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, message: `Could not parse CSV: ${err.message}` });
+    }
+
+    if (records.length === 0) {
+      return res.status(400).json({ success: false, message: 'CSV has no data rows' });
+    }
+    if (records.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Max 1000 rows per import — split into multiple files' });
+    }
+
+    const results: RowResult[] = [];
+
+    for (let i = 0; i < records.length; i++) {
+      const rowNum = i + 2; // +1 for 0-index, +1 for header row
+      const parsed = csvRowSchema.safeParse(records[i]);
+      if (!parsed.success) {
+        results.push({
+          row: rowNum,
+          flatNumber: records[i].flatNumber ?? '',
+          phone: records[i].phone ?? '',
+          status: 'error',
+          message: parsed.error.errors.map(e => e.message).join('; '),
+        });
+        continue;
+      }
+
+      const { flatNumber, name, phone, role } = parsed.data;
+
+      try {
+        const encryptedPhone = encryptSearchable(phone);
+
+        let user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
+        if (!user) {
+          user = await prisma.user.create({ data: { phone: encryptedPhone, name } });
+        }
+
+        const existingMembership = await prisma.societyMember.findFirst({
+          where: { userId: user.id, societyId },
+        });
+        if (existingMembership) {
+          results.push({ row: rowNum, flatNumber, phone, status: 'already_member' });
+          continue;
+        }
+
+        await prisma.societyMember.create({
+          data: {
+            userId: user.id,
+            societyId,
+            flatNumber: encryptSearchable(flatNumber),
+            role,
+            status: 'approved', // pre-approved by the committee via this import
+          },
+        });
+
+        results.push({ row: rowNum, flatNumber, phone, status: 'created' });
+      } catch (err: any) {
+        results.push({ row: rowNum, flatNumber, phone, status: 'error', message: err.message });
+      }
+    }
+
+    const summary = {
+      total: results.length,
+      created: results.filter(r => r.status === 'created').length,
+      alreadyMember: results.filter(r => r.status === 'already_member').length,
+      failed: results.filter(r => r.status === 'error').length,
+    };
+
+    res.json({ success: true, summary, results });
+  }
+);
 
 // ─── PATCH /societies/me/profile — Update own profile ────────────────────────
 

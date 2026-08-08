@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 
 import { validate } from '../middleware/validate';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, requirePin, AuthenticatedRequest } from '../middleware/auth';
 import { prisma } from '../config/db';
 import { decryptField } from '../utils/encryption';
 
@@ -137,8 +137,12 @@ privacyRouter.get('/my-data', async (req: Request, res: Response) => {
 });
 
 // ─── POST /privacy/delete-account — Soft-delete / anonymise ──────────────────
+// Requires a fresh sensitive-action token: call POST /auth/pin/verify (if the user
+// has a PIN set) or POST /auth/otp-action-token (if they don't) first, then send the
+// token in X-Action-Token. This is permanent enough to warrant the same re-auth bar
+// as recording a payment.
 
-privacyRouter.post('/delete-account', async (req: Request, res: Response) => {
+privacyRouter.post('/delete-account', requirePin, async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
 
   await prisma.$transaction(async (tx) => {
