@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../../../lib/api';
-import { Users, Check, X, Shield, Search, RefreshCw } from 'lucide-react';
+import { Users, Check, X, Shield, Search, RefreshCw, Upload, Download, FileSpreadsheet } from 'lucide-react';
 
 interface Member {
   id: string;
@@ -20,6 +20,21 @@ interface Member {
   };
 }
 
+interface BulkImportRowResult {
+  row: number;
+  flatNumber: string;
+  phone: string;
+  status: 'created' | 'already_member' | 'error';
+  message?: string;
+}
+
+interface BulkImportSummary {
+  total: number;
+  created: number;
+  alreadyMember: number;
+  failed: number;
+}
+
 export default function MembersApprovalPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +42,13 @@ export default function MembersApprovalPage() {
   const [actioningId, setActioningId] = useState<string | null>(null);
   const [societyId, setSocietyId] = useState('');
   const [error, setError] = useState('');
+
+  // Bulk CSV import
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState<BulkImportSummary | null>(null);
+  const [importResults, setImportResults] = useState<BulkImportRowResult[]>([]);
+  const [importError, setImportError] = useState('');
 
   const fetchMembers = async (sId: string) => {
     try {
@@ -80,6 +102,44 @@ export default function MembersApprovalPage() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const template = 'flatNumber,name,phone,role\nA-101,Ramesh Kumar,9876543210,owner\nA-102,Priya Singh,9876543211,tenant\n';
+    const blob = new Blob([template], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'urban-hub-members-template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file || !societyId) return;
+
+    setImporting(true);
+    setImportError('');
+    setImportSummary(null);
+    setImportResults([]);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const data = await apiRequest(`/societies/${societyId}/members/bulk-import`, {
+        method: 'POST',
+        body: formData,
+      });
+      setImportSummary(data.summary);
+      setImportResults(data.results || []);
+      await fetchMembers(societyId); // refresh the approved list below
+    } catch (err: any) {
+      setImportError(err.message || 'Import failed');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const pendingMembers = members.filter(m => m.status === 'pending');
   const approvedMembers = members.filter(m => m.status === 'approved');
 
@@ -110,6 +170,66 @@ export default function MembersApprovalPage() {
       </header>
 
       {error && <div className="alert alert-error">{error}</div>}
+
+      {/* Bulk CSV Import */}
+      <div className="panel-container glass-panel">
+        <div className="panel-header">
+          <FileSpreadsheet className="header-icon text-indigo" />
+          <h2>Bulk Import Members</h2>
+        </div>
+        <p className="import-hint">
+          Onboarding a whole society at once? Upload a CSV of flat numbers, names, and phone
+          numbers — everyone is pre-approved instantly. Residents just verify their phone number
+          in the app to claim their spot, no waiting on individual approval.
+        </p>
+        <div className="import-actions">
+          <button className="btn btn-secondary" onClick={handleDownloadTemplate}>
+            <Download size={16} />
+            Download CSV Template
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+          >
+            <Upload size={16} />
+            {importing ? 'Importing...' : 'Upload CSV'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            style={{ display: 'none' }}
+            onChange={handleFileSelected}
+          />
+        </div>
+
+        {importError && <div className="alert alert-error">{importError}</div>}
+
+        {importSummary && (
+          <div className="import-summary">
+            <span className="summary-chip summary-total">{importSummary.total} rows</span>
+            <span className="summary-chip summary-created">{importSummary.created} added</span>
+            <span className="summary-chip summary-skipped">{importSummary.alreadyMember} already members</span>
+            {importSummary.failed > 0 && (
+              <span className="summary-chip summary-failed">{importSummary.failed} failed</span>
+            )}
+          </div>
+        )}
+
+        {importResults.some(r => r.status === 'error') && (
+          <div className="import-errors">
+            <p className="import-errors-title">Rows that couldn&apos;t be imported:</p>
+            <ul>
+              {importResults.filter(r => r.status === 'error').map(r => (
+                <li key={r.row}>
+                  Row {r.row} ({r.flatNumber || 'unknown flat'}): {r.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
 
       {/* Stats row */}
       <section className="stats-row">
@@ -441,6 +561,79 @@ export default function MembersApprovalPage() {
         .btn-action-danger:hover {
           background: var(--status-error);
           color: #fff;
+        }
+
+        .import-hint {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          line-height: 1.5;
+          margin-bottom: 16px;
+        }
+
+        .import-actions {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+
+        .import-summary {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 16px;
+        }
+
+        .summary-chip {
+          font-size: 0.8rem;
+          font-weight: 600;
+          padding: 6px 12px;
+          border-radius: 999px;
+        }
+
+        .summary-total {
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--text-secondary);
+        }
+
+        .summary-created {
+          background: rgba(16, 185, 129, 0.1);
+          color: var(--status-success);
+        }
+
+        .summary-skipped {
+          background: rgba(99, 102, 241, 0.1);
+          color: #a5b4fc;
+        }
+
+        .summary-failed {
+          background: rgba(239, 68, 68, 0.1);
+          color: var(--status-error);
+        }
+
+        .import-errors {
+          margin-top: 16px;
+          background: rgba(239, 68, 68, 0.06);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+          border-radius: 10px;
+          padding: 14px 18px;
+        }
+
+        .import-errors-title {
+          font-size: 0.85rem;
+          font-weight: 600;
+          color: var(--status-error);
+          margin-bottom: 8px;
+        }
+
+        .import-errors ul {
+          margin: 0;
+          padding-left: 18px;
+        }
+
+        .import-errors li {
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+          margin-bottom: 4px;
         }
       `}</style>
     </div>

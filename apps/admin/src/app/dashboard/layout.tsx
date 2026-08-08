@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  Users, MessageSquare, ShieldAlert, LogOut, LayoutDashboard, 
-  Settings, Key, Eye, HelpCircle, Sparkles, Building, DoorOpen
+import {
+  Users, MessageSquare, ShieldAlert, LogOut, LayoutDashboard,
+  Settings, Key, Eye, HelpCircle, Sparkles, Building, DoorOpen, Wallet
 } from 'lucide-react';
 
 interface UserSession {
@@ -60,6 +60,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { name: 'Members Approval', href: '/dashboard/members', icon: Users },
     { name: 'Complaints', href: '/dashboard/complaints', icon: MessageSquare },
     { name: 'Gate Visitors', href: '/dashboard/visitors', icon: DoorOpen },
+    { name: 'Payments', href: '/dashboard/payments', icon: Wallet },
     { name: 'SOS Alerts', href: '/dashboard/sos', icon: ShieldAlert },
     { name: 'Active Sessions', href: '/dashboard/sessions', icon: Settings },
   ];
@@ -70,7 +71,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <aside className="sidebar glass-panel">
         <div className="sidebar-header">
           <Sparkles className="logo-icon" size={24} />
-          <h2>Society<span>Hub</span></h2>
+          <h2>Urban<span>Hub</span></h2>
         </div>
 
         <div className="society-badge">
