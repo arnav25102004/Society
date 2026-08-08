@@ -101,6 +101,11 @@ export function useInactivityLock({ onTimeout }: { onTimeout: () => void }) {
 // In production this should be enabled via expo-build-properties or a native module.
 // The stub below documents the intent and applies in production builds only.
 
+// NOT YET WIRED UP: this returns a fingerprint config but nothing in api.ts (or
+// anywhere else) actually applies it to the network layer — real pinning needs a
+// TLS-interception-capable HTTP client (e.g. via expo-build-properties + a native
+// module) which requires a dev-client rebuild, not just JS. Until that's built,
+// treat this as a documented TODO, not an active security control.
 export function getCertPinningConfig(): Record<string, string[]> | null {
   if (__DEV__) return null;  // Never pin in dev — breaks proxies / Expo tunnel
 
@@ -108,15 +113,10 @@ export function getCertPinningConfig(): Record<string, string[]> | null {
   // These must match the certificate on YOUR server, not Expo's servers.
   // Regenerate and redeploy the app when you rotate certificates.
   //
-  // How to get the fingerprint:
-  //   openssl s_client -connect api.societyhub.in:443 2>/dev/null \
+  // How to get the fingerprint (replace with your real API host):
+  //   openssl s_client -connect society-dcd3.onrender.com:443 2>/dev/null \
   //     | openssl x509 -noout -fingerprint -sha256
-  return {
-    'api.societyhub.in': [
-      // Replace with actual SHA-256 fingerprints before production release
-      'sha256/REPLACE_WITH_ACTUAL_FINGERPRINT_BEFORE_PRODUCTION',
-    ],
-  };
+  return null; // disabled until wired up — returning a fake fingerprint would be worse than nothing
 }
 
 // ─── Initialiser — call once from App.tsx ────────────────────────────────────

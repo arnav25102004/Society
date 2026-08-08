@@ -8,8 +8,8 @@ import { initMobileSecurity, useInactivityLock } from './src/utils/mobileSecurit
 
 export default function App() {
   const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
-  const notificationListener = useRef<Notifications.EventSubscription>();
-  const responseListener = useRef<Notifications.EventSubscription>();
+  const notificationListener = useRef<Notifications.EventSubscription | undefined>(undefined);
+  const responseListener = useRef<Notifications.EventSubscription | undefined>(undefined);
   const [requiresPinAuth, setRequiresPinAuth] = useState(false);
 
   // Phase 5: initialise security measures (screenshot prevention, jailbreak check)
