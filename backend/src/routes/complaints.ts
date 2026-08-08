@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import multer from 'multer';
+import { imageUpload as upload } from '../middleware/upload';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
@@ -15,8 +15,6 @@ import { hasPermission } from '../utils/permissions';
 
 export const complaintsRouter = Router();
 complaintsRouter.use(requireAuth);
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 

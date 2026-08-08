@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import multer from 'multer';
+import { imageUpload as upload } from '../middleware/upload';
 import { Prisma } from '@prisma/client';
 
 import { validate } from '../middleware/validate';
@@ -14,8 +14,6 @@ import { hasPermission } from '../utils/permissions';
 
 export const visitorsRouter = Router();
 visitorsRouter.use(requireAuth);
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const registerVisitorSchema = z.object({
   societyId: z.string().uuid(),
@@ -40,11 +38,13 @@ const preApprovalSchema = z.object({
 });
 
 // ─── POST /visitors — Guard registers visitor ─────────────────────────────────
-// HMAC-signed: guard app must include X-Signature + X-Timestamp headers
+// Not HMAC-signed: this is a multipart/form-data upload, and HMAC-over-JSON-body
+// doesn't apply cleanly to file uploads. Protected instead by requireAuth (real JWT)
+// plus the guard/committee/admin role check below — the same protection level most
+// other mutating routes in this app rely on.
 
 visitorsRouter.post(
   '/',
-  verifyHmac,
   upload.single('photo'),
   async (req: Request, res: Response) => {
     const { userId } = (req as AuthenticatedRequest).user;

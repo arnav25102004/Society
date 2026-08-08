@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 
 import { validate } from '../middleware/validate';
-import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, requirePin, AuthenticatedRequest } from '../middleware/auth';
 import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { notificationService } from '../services/notification.service';
@@ -19,9 +19,10 @@ const generateBillsSchema = z.object({
   notes: z.string().optional(),
 });
 
-const payBillSchema = z.object({
+const markPaidSchema = z.object({
   paymentMethod: z.enum(['upi', 'card', 'netbanking', 'cash']),
   transactionId: z.string().optional(),
+  notes: z.string().optional(),
 });
 
 // ─── GET /payments/bills — My unpaid bills ────────────────────────────────────
@@ -78,61 +79,74 @@ paymentsRouter.get('/bills/:id', async (req: Request, res: Response) => {
   res.json({ success: true, bill });
 });
 
-// ─── POST /payments/bills/:id/pay — Pay a bill ───────────────────────────────
-// HMAC-signed: mobile must include X-Signature + X-Timestamp headers
+// ─── POST /payments/bills/:id/mark-paid — Committee/admin records an offline payment ──
+// v1 has no payment gateway: residents pay the committee directly (cash/UPI/bank transfer
+// outside the app) and a committee/admin member records it here. HMAC-signed like other
+// committee-triggered state changes; requires PIN re-verification since it moves money state.
 
-paymentsRouter.post('/bills/:id/pay', verifyHmac, validate(payBillSchema), async (req: Request, res: Response) => {
-  const { userId } = (req as AuthenticatedRequest).user;
-  const { paymentMethod, transactionId } = req.body as z.infer<typeof payBillSchema>;
+paymentsRouter.post(
+  '/bills/:id/mark-paid',
+  verifyHmac,
+  requirePin,
+  validate(markPaidSchema),
+  async (req: Request, res: Response) => {
+    const { userId } = (req as AuthenticatedRequest).user;
+    const { paymentMethod, transactionId, notes } = req.body as z.infer<typeof markPaidSchema>;
 
-  const bill = await prisma.maintenanceBill.findUnique({ where: { id: req.params.id } });
-  if (!bill) return res.status(404).json({ success: false, message: 'Bill not found' });
-  if (bill.status === 'paid') return res.status(400).json({ success: false, message: 'Already paid' });
+    const bill = await prisma.maintenanceBill.findUnique({ where: { id: req.params.id } });
+    if (!bill) return res.status(404).json({ success: false, message: 'Bill not found' });
+    if (bill.status === 'paid') return res.status(400).json({ success: false, message: 'Already paid' });
 
-  const member = await prisma.societyMember.findFirst({
-    where: { userId, societyId: bill.societyId, status: 'approved' },
-  });
-  if (!member || member.flatNumber !== bill.flatNumber) {
-    return res.status(403).json({ success: false, message: 'This bill is not for your flat' });
-  }
-
-  const [payment] = await prisma.$transaction([
-    prisma.payment.create({
-      data: {
-        billId: bill.id,
-        userId,
-        societyId: bill.societyId,
-        amount: bill.totalAmount,
-        paymentMethod,
-        transactionId: transactionId ?? `TXN-${Date.now()}`,
-        status: 'success',
-        paidAt: new Date(),
-      },
-    }),
-    prisma.maintenanceBill.update({
-      where: { id: bill.id },
-      data: { status: 'paid' },
-    }),
-  ]);
-
-  // Notify committee
-  const committeeMembers = await prisma.societyMember.findMany({
-    where: { societyId: bill.societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
-    include: { user: { select: { expoPushToken: true } } },
-  });
-  const tokens = committeeMembers.map(m => m.user.expoPushToken).filter((t): t is string => !!t);
-  if (tokens.length) {
-    notificationService.paymentReceived({
-      committeeTokens: tokens,
-      residentToken: undefined,
-      flatNumber: bill.flatNumber,
-      amount: Number(bill.totalAmount),
-      societyId: bill.societyId,
+    const member = await prisma.societyMember.findFirst({
+      where: { userId, societyId: bill.societyId, role: { in: ['committee', 'admin'] }, status: 'approved' },
     });
-  }
+    if (!member) return res.status(403).json({ success: false, message: 'Committee access required' });
 
-  res.json({ success: true, payment });
-});
+    const flatMember = await prisma.societyMember.findFirst({
+      where: { societyId: bill.societyId, flatNumber: bill.flatNumber, status: 'approved', role: { in: ['owner', 'tenant'] } },
+    });
+
+    const [payment] = await prisma.$transaction([
+      prisma.payment.create({
+        data: {
+          billId: bill.id,
+          userId: flatMember?.userId ?? userId,
+          societyId: bill.societyId,
+          amount: bill.totalAmount,
+          paymentMethod,
+          transactionId: transactionId ?? `MANUAL-${Date.now()}`,
+          status: 'success',
+          paidAt: new Date(),
+          recordedByUserId: userId,
+          notes,
+        },
+      }),
+      prisma.maintenanceBill.update({
+        where: { id: bill.id },
+        data: { status: 'paid' },
+      }),
+    ]);
+
+    // Notify the resident their payment was recorded
+    if (flatMember?.userId) {
+      const resident = await prisma.user.findUnique({
+        where: { id: flatMember.userId },
+        select: { expoPushToken: true },
+      });
+      if (resident?.expoPushToken) {
+        notificationService.paymentReceived({
+          committeeTokens: [],
+          residentToken: resident.expoPushToken,
+          flatNumber: bill.flatNumber,
+          amount: Number(bill.totalAmount),
+          societyId: bill.societyId,
+        });
+      }
+    }
+
+    res.json({ success: true, payment });
+  }
+);
 
 // ─── POST /payments/bills/generate — Committee generates bills ────────────────
 
