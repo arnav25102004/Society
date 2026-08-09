@@ -37,3 +37,9 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Production build
+        # Catches build-only failures npm ci's devDependencies would otherwise mask —
+        # e.g. test files leaking into tsc's production compile when Render's install
+        # skips devDependencies. See backend/tsconfig.json's test-file exclusion.
+        run: npm run build
