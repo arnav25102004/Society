@@ -55,6 +55,12 @@ export const env = {
     fast2smsApiKey: process.env.FAST2SMS_API_KEY ?? '',
     msg91AuthKey: process.env.MSG91_AUTH_KEY ?? '',
     msg91TemplateId: process.env.MSG91_TEMPLATE_ID ?? '',
+    // Google Play reviewer test account — logs in with a fixed OTP instead of a real
+    // SMS, since reviewers can't receive texts. Scoped to exactly one phone number,
+    // set as the "test credentials" in the Play Console submission. Unset either var
+    // in production to disable entirely.
+    reviewAccountPhone: process.env.REVIEW_ACCOUNT_PHONE ?? '',
+    reviewAccountOtp: process.env.REVIEW_ACCOUNT_OTP ?? '',
   },
 
   // File uploads: 'local' saves to ./uploads/ folder, no AWS needed in dev

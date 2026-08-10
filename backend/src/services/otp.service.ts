@@ -52,10 +52,20 @@ async function sendViaMsg91(phone: string, otp: string): Promise<void> {
   }
 }
 
+function isReviewAccount(phone: string): boolean {
+  return !!env.otp.reviewAccountPhone && !!env.otp.reviewAccountOtp && phone === env.otp.reviewAccountPhone;
+}
+
 // ─── Main OTP service ─────────────────────────────────────────────────────────
 export const otpService = {
   async send(phone: string): Promise<{ success: boolean; message: string }> {
     try {
+      // Google Play reviewer account: always "succeeds" without sending a real SMS
+      // or touching rate limits — the fixed OTP is checked in verify() below.
+      if (isReviewAccount(phone)) {
+        return { success: true, message: 'OTP sent successfully' };
+      }
+
       // Rate limit: max 5 OTPs per phone per hour
       const attemptsKey = `${OTP_ATTEMPT_PREFIX}${phone}`;
       const attempts = await redis.incr(attemptsKey);
@@ -92,6 +102,12 @@ export const otpService = {
   async verify(phone: string, otp: string): Promise<boolean> {
     // Master OTP for development
     if (env.isDev && otp === '000000') return true;
+
+    // Google Play reviewer account — fixed OTP, works in production too, but only
+    // for this exact phone number.
+    if (isReviewAccount(phone)) {
+      return otp === env.otp.reviewAccountOtp;
+    }
 
     const key = `${OTP_PREFIX}${phone}`;
     const stored = await redis.get(key);
