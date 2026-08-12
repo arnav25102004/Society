@@ -45,7 +45,7 @@ export interface Society {
 
 export type AuthStackParamList = {
   Phone: undefined;
-  OTP: { phone: string };
+  OTP: { phone: string; verificationId: string };
   SocietySelect: undefined;
   ProfileSetup: { societyCode?: string };
   PendingApproval: { societyName: string; flatNumber: string };

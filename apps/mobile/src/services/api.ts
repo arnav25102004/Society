@@ -70,9 +70,12 @@ api.interceptors.response.use(
 // ─── Typed API helpers ────────────────────────────────────────────────────────
 
 export const authApi = {
-  sendOtp: (phone: string) => api.post('/auth/send-otp', { phone }),
-  verifyOtp: (phone: string, otp: string, deviceId?: string) =>
-    api.post('/auth/verify-otp', { phone, otp, deviceId }),
+  /**
+   * Exchange a Firebase Phone Auth ID Token for our own JWT pair.
+   * Call this after firebaseAuthService.verifyOtp() returns an idToken.
+   */
+  firebaseVerify: (idToken: string, deviceId?: string, deviceName?: string) =>
+    api.post('/auth/firebase-verify', { idToken, deviceId, deviceName }),
   refreshToken: (refreshToken: string) => api.post('/auth/refresh-token', { refreshToken }),
   logout: (refreshToken: string) => api.delete('/auth/logout', { data: { refreshToken } }),
   me: () => api.get('/auth/me'),
