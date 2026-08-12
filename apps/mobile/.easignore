@@ -1,0 +1,18 @@
+# Ignore dependencies
+node_modules/
+
+# Ignore local build folders & caches
+.expo/
+android/app/build/
+android/.gradle/
+android/build/
+ios/build/
+bin/
+
+# Ignore environment variables
+.env.local
+.env
+
+# Ignore OS files
+.DS_Store
+Thumbs.db

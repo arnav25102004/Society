@@ -28,7 +28,7 @@ module.exports = {
   expo: {
     name: 'Urban Hub',
     slug: 'societyhub',
-    version: '1.0.0',
+    version: '3.0.0',
     sdkVersion: '54.0.0',
     orientation: 'portrait',
     userInterfaceStyle: 'light',
@@ -67,7 +67,25 @@ module.exports = {
     web: {
       favicon: './assets/images/favicon.png',
     },
-    plugins: ['expo-secure-store', 'expo-font'],
+    plugins: [
+      '@react-native-firebase/app',
+      'expo-secure-store',
+      'expo-font',
+      [
+        'expo-build-properties',
+        {
+          android: {
+            // Google Play requires targetSdkVersion 36 (Android 16) for new/updated
+            // app submissions from August 31, 2026 onward. A plain top-level
+            // android.targetSdkVersion in this config is NOT read by modern Expo —
+            // it must go through this plugin, which patches the generated
+            // android/build.gradle at prebuild time.
+            compileSdkVersion: 36,
+            targetSdkVersion: 36,
+          },
+        },
+      ],
+    ],
     extra: {
       apiUrl: API_URL,
       wsUrl: WS_URL,
