@@ -49,6 +49,7 @@ module.exports = {
     },
     android: {
       package: 'com.societyhub.app',
+      googleServicesFile: './google-services.json',
       adaptiveIcon: {
         foregroundImage: './assets/images/adaptive-icon.png',
         backgroundColor: '#0D1836',

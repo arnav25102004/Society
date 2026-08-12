@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "660962871781",
+    "project_id": "urban-hub-af7ba",
+    "storage_bucket": "urban-hub-af7ba.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:660962871781:android:f3b7d52fc4a0ff15bbc70c",
+        "android_client_info": {
+          "package_name": "com.societyhub.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBW5R_Nqudlclpib57DdFJk-lmDRdi-Sec"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
