@@ -50,7 +50,8 @@ export const env = {
     // 'console'   = OTP printed to terminal (dev only, never in production)
     // 'fast2sms'  = free Indian SMS — signup at fast2sms.com, no DLT needed
     // 'msg91'     = paid Indian SMS (₹0.28/SMS), needs DLT template ID
-    provider: (process.env.OTP_PROVIDER ?? 'console') as 'console' | 'fast2sms' | 'msg91',
+    // 'firebase'  = Firebase Phone Auth (recommended for production)
+    provider: (process.env.OTP_PROVIDER ?? 'console') as 'console' | 'fast2sms' | 'msg91' | 'firebase',
     expirySeconds: parseInt(process.env.OTP_EXPIRY_SECONDS ?? '600', 10),
     fast2smsApiKey: process.env.FAST2SMS_API_KEY ?? '',
     msg91AuthKey: process.env.MSG91_AUTH_KEY ?? '',
@@ -61,6 +62,13 @@ export const env = {
     // in production to disable entirely.
     reviewAccountPhone: process.env.REVIEW_ACCOUNT_PHONE ?? '',
     reviewAccountOtp: process.env.REVIEW_ACCOUNT_OTP ?? '',
+  },
+
+  // Firebase Admin SDK — used to verify Firebase Phone Auth ID Tokens
+  // Encode the service account JSON file as base64:
+  //   node -e "process.stdout.write(require('fs').readFileSync('service-account.json').toString('base64'))"
+  firebase: {
+    serviceAccountB64: process.env.FIREBASE_SERVICE_ACCOUNT_B64 ?? '',
   },
 
   // File uploads: 'local' saves to ./uploads/ folder, no AWS needed in dev
