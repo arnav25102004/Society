@@ -7,6 +7,7 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { authApi } from '../../services/api';
+import { firebaseAuthService } from '../../services/firebaseAuth';
 import { useAuthStore } from '../../store/authStore';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OTP'>;
@@ -14,10 +15,12 @@ const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 30;
 
 export function OTPScreen({ route, navigation }: Props) {
-  const { phone } = route.params;
+  const { phone, verificationId } = route.params;
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(RESEND_COOLDOWN);
+  // verificationId may be refreshed on resend
+  const [currentVerificationId, setCurrentVerificationId] = useState(verificationId);
   const inputRef = useRef<TextInput>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { setSession } = useAuthStore();
@@ -34,14 +37,24 @@ export function OTPScreen({ route, navigation }: Props) {
 
   async function handleResend() {
     if (resendSeconds > 0) return;
-    try { await authApi.sendOtp(phone); setOtp(''); startTimer(); } catch { Alert.alert('Error', 'Failed to resend OTP.'); }
+    try {
+      const newVerificationId = await firebaseAuthService.sendOtp(phone);
+      setCurrentVerificationId(newVerificationId);
+      setOtp('');
+      startTimer();
+    } catch {
+      Alert.alert('Error', 'Failed to resend OTP.');
+    }
   }
 
   async function handleVerify() {
     if (otp.length !== OTP_LENGTH || loading) return;
     setLoading(true);
     try {
-      const { data } = await authApi.verifyOtp(phone, otp);
+      // Step 1: Verify OTP with Firebase → get Firebase ID Token
+      const idToken = await firebaseAuthService.verifyOtp(currentVerificationId, otp);
+      // Step 2: Exchange Firebase ID Token for our app's JWT
+      const { data } = await authApi.firebaseVerify(idToken);
       await setSession(data.user, data.tokens, data.memberships);
       if (data.memberships.length === 0) {
         navigation.navigate('SocietySelect');
@@ -53,7 +66,7 @@ export function OTPScreen({ route, navigation }: Props) {
         // approved membership → RootNavigator auto-shows the main app
       }
     } catch (err: any) {
-      Alert.alert('Incorrect OTP', err?.response?.data?.message ?? 'Please try again.');
+      Alert.alert('Incorrect OTP', err?.response?.data?.message ?? err?.message ?? 'Please try again.');
       setOtp(''); inputRef.current?.focus();
     } finally { setLoading(false); }
   }
