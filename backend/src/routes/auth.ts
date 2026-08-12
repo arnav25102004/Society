@@ -12,8 +12,9 @@ import { jwtService } from '../services/jwt.service';
 import { hmacKeyService } from '../services/hmacKey.service';
 import { prisma } from '../config/db';
 import { env } from '../config/env';
-import { encryptSearchable, encryptField, decryptField } from '../utils/encryption';
+import { encryptSearchable, decryptField } from '../utils/encryption';
 import { SecurityAuditService } from '../services/security-audit.service';
+import { firebaseAdmin } from '../config/firebase';
 
 export const authRouter = Router();
 
@@ -59,16 +60,8 @@ async function sendNewDeviceAlert(tokens: string[], deviceName: string): Promise
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-const sendOtpSchema = z.object({
-  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
-});
-
-const verifyOtpSchema = z.object({
-  phone:      z.string().regex(/^[6-9]\d{9}$/),
-  otp:        z.string().length(6, 'OTP must be 6 digits'),
-  deviceId:   z.string().max(200).optional(),
-  deviceName: z.string().max(200).optional(),
-});
+// sendOtpSchema / verifyOtpSchema removed — OTP delivery is now handled by
+// Firebase Phone Auth on the client. See POST /auth/firebase-verify.
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
@@ -190,72 +183,40 @@ authRouter.post('/super-admin/login', validate(superAdminLoginSchema), async (re
 });
 
 
-// ─── POST /auth/send-otp ──────────────────────────────────────────────────────
+// ─── POST /auth/firebase-verify ──────────────────────────────────────────────
+// Accepts a Firebase Phone Auth ID Token, verifies it server-side with Firebase
+// Admin SDK, then upserts the user and issues our own JWT pair.
 
-authRouter.post('/send-otp', validate(sendOtpSchema), async (req: Request, res: Response) => {
-  const { phone } = req.body as z.infer<typeof sendOtpSchema>;
-  console.log(`[Auth] Received OTP request for: ${phone}`);
-  const result = await otpService.send(phone);
-  if (!result.success) {
-    return res.status(429).json({ success: false, message: result.message });
-  }
-  res.json({ success: true, message: result.message });
+const firebaseVerifySchema = z.object({
+  idToken:    z.string().min(1),
+  deviceId:   z.string().max(200).optional(),
+  deviceName: z.string().max(200).optional(),
 });
 
-// ─── POST /auth/verify-otp ────────────────────────────────────────────────────
-
-authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, res: Response) => {
-  const { phone, otp, deviceId, deviceName } = req.body as z.infer<typeof verifyOtpSchema>;
+authRouter.post('/firebase-verify', validate(firebaseVerifySchema), async (req: Request, res: Response) => {
+  const { idToken, deviceId, deviceName } = req.body as z.infer<typeof firebaseVerifySchema>;
   const ip        = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? '';
   const userAgent = req.headers['user-agent'] ?? '';
   const headerDeviceId = req.headers['x-device-id'] as string | undefined;
   const effectiveDeviceId = deviceId ?? headerDeviceId;
 
-  // ── Account lockout check ─────────────────────────────────────────────────
-  const attempt = await prisma.loginAttempt.findUnique({ where: { phone } });
-  if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) {
-    const waitMinutes = Math.ceil((attempt.lockedUntil.getTime() - Date.now()) / 60000);
-    return res.status(429).json({
-      success: false,
-      message: `Too many attempts. Try again in ${waitMinutes} minute${waitMinutes !== 1 ? 's' : ''}.`,
-    });
+  // ── Verify Firebase ID Token ───────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let decodedToken: any;
+  try {
+    decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
+  } catch (err: any) {
+    console.warn('[Auth] Firebase ID token verification failed:', err?.message);
+    return res.status(401).json({ success: false, message: 'Invalid or expired Firebase token' });
   }
 
-  // ── OTP verification ──────────────────────────────────────────────────────
-  const valid = await otpService.verify(phone, otp);
-  if (!valid) {
-    // Record failed attempt
-    const now = new Date();
-    const recentWindow = new Date(Date.now() - FAILURE_WINDOW_MS);
-    const isWithinWindow = attempt?.lastAttemptAt && attempt.lastAttemptAt > recentWindow;
-    const newCount = isWithinWindow ? (attempt?.attemptCount ?? 0) + 1 : 1;
-    const lockUntil = newCount >= MAX_OTP_FAILURES
-      ? new Date(Date.now() + LOCKOUT_DURATION_MS)
-      : null;
-
-    await prisma.loginAttempt.upsert({
-      where:  { phone },
-      update: { attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
-      create: { phone, attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
-    });
-
-    SecurityAuditService.log({
-      action: 'auth.otp_failed',
-      ipAddress: SecurityAuditService.extractIp(req),
-      userAgent: req.headers['user-agent'],
-      success: false,
-      metadata: { phone: `****${phone.slice(-4)}`, attemptCount: newCount },
-    });
-    // Always return the same generic message to avoid timing/oracle attacks
-    return res.status(401).json({ success: false, message: 'Invalid or expired OTP' });
+  // Firebase stores phone in E.164 (+91XXXXXXXXXX) — strip the country code for storage
+  const e164Phone = decodedToken.phone_number;
+  if (!e164Phone) {
+    return res.status(400).json({ success: false, message: 'Firebase token does not contain a phone number' });
   }
-
-  // ── Success — reset lockout ───────────────────────────────────────────────
-  await prisma.loginAttempt.upsert({
-    where:  { phone },
-    update: { attemptCount: 0, lockedUntil: null },
-    create: { phone, attemptCount: 0 },
-  });
+  // Strip +91 prefix for Indian numbers, store raw 10-digit number
+  const phone = e164Phone.startsWith('+91') ? e164Phone.slice(3) : e164Phone;
 
   // ── Upsert user (phone encrypted at rest) ────────────────────────────────
   const encryptedPhone = encryptSearchable(phone);
@@ -272,7 +233,6 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
     });
 
     if (!existing) {
-      // New device — create record and alert other devices
       await prisma.deviceSession.create({
         data: {
           userId:     user.id,
@@ -283,7 +243,6 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
         },
       });
 
-      // Notify all other trusted device push tokens
       const otherDevices = await prisma.deviceSession.findMany({
         where: { userId: user.id, deviceId: { not: effectiveDeviceId } },
       });
@@ -297,7 +256,6 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
         sendNewDeviceAlert(tokens, name); // fire-and-forget
       }
     } else {
-      // Update last seen
       await prisma.deviceSession.update({
         where: { userId_deviceId: { userId: user.id, deviceId: effectiveDeviceId } },
         data:  { lastSeenAt: new Date(), ipAddress: ip, userAgent: userAgent.slice(0, 500) },
@@ -312,8 +270,8 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
   });
 
   // ── Issue tokens (family-tracked) ─────────────────────────────────────────
-  const familyId = uuidv4();
-  const tokenId  = uuidv4();
+  const familyId  = uuidv4();
+  const tokenId   = uuidv4();
   const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_MS);
 
   const refreshToken = jwtService.signRefreshToken({ userId: user.id, tokenId });
@@ -323,7 +281,7 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
     data: { familyId, userId: user.id, tokenHash, expiresAt },
   });
 
-  const accessToken = jwtService.signAccessToken({ userId: user.id, phone });  // raw phone in JWT
+  const accessToken = jwtService.signAccessToken({ userId: user.id, phone });
 
   SecurityAuditService.log({
     userId: user.id,
@@ -331,7 +289,7 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
     ipAddress: SecurityAuditService.extractIp(req),
     userAgent: req.headers['user-agent'],
     success: true,
-    metadata: { deviceId: effectiveDeviceId, phone: `****${phone.slice(-4)}` },
+    metadata: { deviceId: effectiveDeviceId, phone: `****${phone.slice(-4)}`, provider: 'firebase' },
   });
 
   res.json({
@@ -340,7 +298,7 @@ authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, r
     tokens: { accessToken, refreshToken },
     user: {
       id:        user.id,
-      phone,                // return raw phone to client
+      phone,
       name:      user.name,
       avatarUrl: user.avatarUrl,
       hasPinSet: !!user.pinHash,
@@ -551,7 +509,8 @@ authRouter.post('/pin/verify', requireAuth, validate(verifyPinSchema), async (re
 
 // ─── POST /auth/otp-action-token ───────────────────────────────────────────────
 // Same purpose as /auth/pin/verify (issues a 5-min sensitive-action token) for users
-// who have never set a PIN — call POST /auth/send-otp first, then this with the code.
+// who have never set a PIN. The client triggers a fresh Firebase Phone Auth OTP via
+// the Firebase SDK, then sends the 6-digit code here for server-side Redis verification.
 // Verifies against the *authenticated* user's own phone, not an arbitrary one.
 
 authRouter.post('/otp-action-token', requireAuth, validate(otpActionTokenSchema), async (req: Request, res: Response) => {
