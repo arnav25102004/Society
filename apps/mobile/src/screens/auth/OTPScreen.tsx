@@ -7,7 +7,6 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { authApi } from '../../services/api';
-import { firebaseAuthService } from '../../services/firebaseAuth';
 import { useAuthStore } from '../../store/authStore';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'OTP'>;
@@ -15,12 +14,10 @@ const OTP_LENGTH = 6;
 const RESEND_COOLDOWN = 30;
 
 export function OTPScreen({ route, navigation }: Props) {
-  const { phone, verificationId } = route.params;
+  const { phone } = route.params;
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(RESEND_COOLDOWN);
-  // verificationId may be refreshed on resend
-  const [currentVerificationId, setCurrentVerificationId] = useState(verificationId);
   const inputRef = useRef<TextInput>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { setSession } = useAuthStore();
@@ -38,8 +35,7 @@ export function OTPScreen({ route, navigation }: Props) {
   async function handleResend() {
     if (resendSeconds > 0) return;
     try {
-      const newVerificationId = await firebaseAuthService.sendOtp(phone);
-      setCurrentVerificationId(newVerificationId);
+      await authApi.sendOtp(phone);
       setOtp('');
       startTimer();
     } catch {
@@ -51,10 +47,7 @@ export function OTPScreen({ route, navigation }: Props) {
     if (otp.length !== OTP_LENGTH || loading) return;
     setLoading(true);
     try {
-      // Step 1: Verify OTP with Firebase → get Firebase ID Token
-      const idToken = await firebaseAuthService.verifyOtp(currentVerificationId, otp);
-      // Step 2: Exchange Firebase ID Token for our app's JWT
-      const { data } = await authApi.firebaseVerify(idToken);
+      const { data } = await authApi.verifyOtp(phone, otp);
       await setSession(data.user, data.tokens, data.memberships);
       if (data.memberships.length === 0) {
         navigation.navigate('SocietySelect');

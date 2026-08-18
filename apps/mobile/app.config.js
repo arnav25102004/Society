@@ -49,7 +49,6 @@ module.exports = {
     },
     android: {
       package: 'com.societyhub.app',
-      googleServicesFile: './google-services.json',
       adaptiveIcon: {
         foregroundImage: './assets/images/adaptive-icon.png',
         backgroundColor: '#0D1836',
@@ -69,7 +68,6 @@ module.exports = {
       favicon: './assets/images/favicon.png',
     },
     plugins: [
-      '@react-native-firebase/app',
       'expo-secure-store',
       'expo-font',
       [

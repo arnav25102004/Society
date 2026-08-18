@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { AuthStackParamList } from '../../types';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
-import { firebaseAuthService } from '../../services/firebaseAuth';
+import { authApi } from '../../services/api';
 
 type Props = NativeStackScreenProps<AuthStackParamList, 'Phone'>;
 
@@ -20,10 +20,10 @@ export function PhoneScreen({ navigation }: Props) {
     if (!isValid) { Alert.alert('Invalid number', 'Enter a valid 10-digit Indian mobile number.'); return; }
     setLoading(true);
     try {
-      const verificationId = await firebaseAuthService.sendOtp(phone);
-      navigation.navigate('OTP', { phone, verificationId });
+      await authApi.sendOtp(phone);
+      navigation.navigate('OTP', { phone });
     } catch (err: any) {
-      Alert.alert('Error', err?.message ?? 'Failed to send OTP. Please try again.');
+      Alert.alert('Error', err?.response?.data?.message ?? err?.message ?? 'Failed to send OTP. Please try again.');
     } finally { setLoading(false); }
   }
 

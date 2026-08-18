@@ -60,8 +60,16 @@ async function sendNewDeviceAlert(tokens: string[], deviceName: string): Promise
 
 // ─── Schemas ──────────────────────────────────────────────────────────────────
 
-// sendOtpSchema / verifyOtpSchema removed — OTP delivery is now handled by
-// Firebase Phone Auth on the client. See POST /auth/firebase-verify.
+const sendOtpSchema = z.object({
+  phone: z.string().regex(/^[6-9]\d{9}$/, 'Enter a valid 10-digit Indian mobile number'),
+});
+
+const verifyOtpSchema = z.object({
+  phone:      z.string().regex(/^[6-9]\d{9}$/),
+  otp:        z.string().length(6, 'OTP must be 6 digits'),
+  deviceId:   z.string().max(200).optional(),
+  deviceName: z.string().max(200).optional(),
+});
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1),
@@ -182,6 +190,168 @@ authRouter.post('/super-admin/login', validate(superAdminLoginSchema), async (re
   });
 });
 
+
+// ─── POST /auth/send-otp ──────────────────────────────────────────────────────
+
+authRouter.post('/send-otp', validate(sendOtpSchema), async (req: Request, res: Response) => {
+  const { phone } = req.body as z.infer<typeof sendOtpSchema>;
+  const result = await otpService.send(phone);
+  if (!result.success) {
+    return res.status(429).json({ success: false, message: result.message });
+  }
+  res.json({ success: true, message: result.message });
+});
+
+// ─── POST /auth/verify-otp ────────────────────────────────────────────────────
+
+authRouter.post('/verify-otp', validate(verifyOtpSchema), async (req: Request, res: Response) => {
+  const { phone, otp, deviceId, deviceName } = req.body as z.infer<typeof verifyOtpSchema>;
+  const ip        = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? '';
+  const userAgent = req.headers['user-agent'] ?? '';
+  const headerDeviceId = req.headers['x-device-id'] as string | undefined;
+  const effectiveDeviceId = deviceId ?? headerDeviceId;
+
+  // ── Account lockout check ─────────────────────────────────────────────────
+  const attempt = await prisma.loginAttempt.findUnique({ where: { phone } });
+  if (attempt?.lockedUntil && attempt.lockedUntil > new Date()) {
+    const waitMinutes = Math.ceil((attempt.lockedUntil.getTime() - Date.now()) / 60000);
+    return res.status(429).json({
+      success: false,
+      message: `Too many attempts. Try again in ${waitMinutes} minute${waitMinutes !== 1 ? 's' : ''}.`,
+    });
+  }
+
+  // ── OTP verification ──────────────────────────────────────────────────────
+  const valid = await otpService.verify(phone, otp);
+  if (!valid) {
+    const now = new Date();
+    const recentWindow = new Date(Date.now() - FAILURE_WINDOW_MS);
+    const isWithinWindow = attempt?.lastAttemptAt && attempt.lastAttemptAt > recentWindow;
+    const newCount = isWithinWindow ? (attempt?.attemptCount ?? 0) + 1 : 1;
+    const lockUntil = newCount >= MAX_OTP_FAILURES
+      ? new Date(Date.now() + LOCKOUT_DURATION_MS)
+      : null;
+
+    await prisma.loginAttempt.upsert({
+      where:  { phone },
+      update: { attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
+      create: { phone, attemptCount: newCount, lastAttemptAt: now, lockedUntil: lockUntil },
+    });
+
+    SecurityAuditService.log({
+      action: 'auth.otp_failed',
+      ipAddress: SecurityAuditService.extractIp(req),
+      userAgent: req.headers['user-agent'],
+      success: false,
+      metadata: { phone: `****${phone.slice(-4)}`, attemptCount: newCount },
+    });
+    // Always return the same generic message to avoid timing/oracle attacks
+    return res.status(401).json({ success: false, message: 'Invalid or expired OTP' });
+  }
+
+  // ── Success — reset lockout ───────────────────────────────────────────────
+  await prisma.loginAttempt.upsert({
+    where:  { phone },
+    update: { attemptCount: 0, lockedUntil: null },
+    create: { phone, attemptCount: 0 },
+  });
+
+  // ── Upsert user (phone encrypted at rest) ────────────────────────────────
+  const encryptedPhone = encryptSearchable(phone);
+  let user = await prisma.user.findUnique({ where: { phone: encryptedPhone } });
+  const isNewUser = !user;
+  if (!user) {
+    user = await prisma.user.create({ data: { phone: encryptedPhone, name: '' } });
+  }
+
+  // ── Device fingerprinting ─────────────────────────────────────────────────
+  if (effectiveDeviceId) {
+    const existing = await prisma.deviceSession.findUnique({
+      where: { userId_deviceId: { userId: user.id, deviceId: effectiveDeviceId } },
+    });
+
+    if (!existing) {
+      await prisma.deviceSession.create({
+        data: {
+          userId:     user.id,
+          deviceId:   effectiveDeviceId,
+          deviceName: deviceName ?? userAgent.slice(0, 200),
+          ipAddress:  ip,
+          userAgent:  userAgent.slice(0, 500),
+        },
+      });
+
+      const otherDevices = await prisma.deviceSession.findMany({
+        where: { userId: user.id, deviceId: { not: effectiveDeviceId } },
+      });
+      if (otherDevices.length > 0) {
+        const otherUsers = await prisma.user.findMany({
+          where: { id: user.id },
+          select: { expoPushToken: true },
+        });
+        const tokens = otherUsers.flatMap(u => u.expoPushToken ? [u.expoPushToken] : []);
+        const name = deviceName ?? 'a new device';
+        sendNewDeviceAlert(tokens, name); // fire-and-forget
+      }
+    } else {
+      await prisma.deviceSession.update({
+        where: { userId_deviceId: { userId: user.id, deviceId: effectiveDeviceId } },
+        data:  { lastSeenAt: new Date(), ipAddress: ip, userAgent: userAgent.slice(0, 500) },
+      });
+    }
+  }
+
+  // ── Return memberships ────────────────────────────────────────────────────
+  const memberships = await prisma.societyMember.findMany({
+    where:   { userId: user.id },
+    include: { society: { select: { id: true, name: true, city: true } } },
+  });
+
+  // ── Issue tokens (family-tracked) ─────────────────────────────────────────
+  const familyId  = uuidv4();
+  const tokenId   = uuidv4();
+  const expiresAt = new Date(Date.now() + REFRESH_EXPIRY_MS);
+
+  const refreshToken = jwtService.signRefreshToken({ userId: user.id, tokenId });
+  const tokenHash    = hashToken(refreshToken);
+
+  await prisma.refreshTokenFamily.create({
+    data: { familyId, userId: user.id, tokenHash, expiresAt },
+  });
+
+  const accessToken = jwtService.signAccessToken({ userId: user.id, phone });
+
+  SecurityAuditService.log({
+    userId: user.id,
+    action: isNewUser ? 'auth.register' : 'auth.login',
+    ipAddress: SecurityAuditService.extractIp(req),
+    userAgent: req.headers['user-agent'],
+    success: true,
+    metadata: { deviceId: effectiveDeviceId, phone: `****${phone.slice(-4)}`, provider: 'otp' },
+  });
+
+  res.json({
+    success: true,
+    isNewUser,
+    tokens: { accessToken, refreshToken },
+    user: {
+      id:        user.id,
+      phone,
+      name:      user.name,
+      avatarUrl: user.avatarUrl,
+      hasPinSet: !!user.pinHash,
+    },
+    memberships: memberships.map(m => ({
+      id:          m.id,
+      societyId:   m.societyId,
+      societyName: m.society.name,
+      societyCity: m.society.city,
+      flatNumber:  m.flatNumber,
+      role:        m.role,
+      status:      m.status,
+    })),
+  });
+});
 
 // ─── POST /auth/firebase-verify ──────────────────────────────────────────────
 // Accepts a Firebase Phone Auth ID Token, verifies it server-side with Firebase
