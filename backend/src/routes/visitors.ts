@@ -9,7 +9,7 @@ import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
-import { encryptField, decryptField } from '../utils/encryption';
+import { encryptField, encryptSearchable, decryptField } from '../utils/encryption';
 import { hasPermission } from '../utils/permissions';
 
 export const visitorsRouter = Router();
@@ -53,6 +53,11 @@ visitorsRouter.post(
       return res.status(400).json({ success: false, errors: body.error.errors });
     }
     const { societyId, flatNumber, visitorName, visitorPhone, purpose, companyName } = body.data;
+    // SocietyMember.flatNumber and PreApproval.flatNumber are both encrypted (deterministic,
+    // so they're still usable in WHERE clauses) — Visitor.flatNumber must match that same
+    // scheme, or every downstream comparison (pre-approval matching, resident notification
+    // lookup, the resident's own visitor list, approve/reject) silently fails to find a match.
+    const encryptedFlatNumber = encryptSearchable(flatNumber);
 
     const canWrite = await hasPermission(userId, 'visitor', 'write', { societyId });
     if (!canWrite) return res.status(403).json({ success: false, message: 'Guard access required' });
@@ -70,7 +75,7 @@ visitorsRouter.post(
     const preApproval = await prisma.preApproval.findFirst({
       where: {
         societyId,
-        flatNumber,
+        flatNumber: encryptedFlatNumber,
         visitorName: { contains: visitorName, mode: 'insensitive' },
         isActive: true,
         validFrom: { lte: now },
@@ -94,7 +99,7 @@ visitorsRouter.post(
     const visitor = await prisma.visitor.create({
       data: {
         societyId,
-        flatNumber,
+        flatNumber: encryptedFlatNumber,
         visitorName,
         visitorPhone: visitorPhone ? encryptField(visitorPhone) : undefined,
         visitorPhoto: photoUrl,
@@ -109,7 +114,7 @@ visitorsRouter.post(
     if (!isPreApproved) {
       // Notify resident of the flat
       const residentMembers = await prisma.societyMember.findMany({
-        where: { societyId, flatNumber, status: 'approved' },
+        where: { societyId, flatNumber: encryptedFlatNumber, status: 'approved' },
         include: { user: { select: { expoPushToken: true, id: true } } },
       });
       const tokens = residentMembers.map(m => m.user.expoPushToken).filter((t): t is string => !!t);
@@ -120,7 +125,7 @@ visitorsRouter.post(
           visitorName,
           purpose,
           visitorId: visitor.id,
-          flatNumber,
+          flatNumber, // plaintext for the push notification body text
           companyName,
         });
       }
@@ -134,7 +139,9 @@ visitorsRouter.post(
       }, 5 * 60 * 1000);
     }
 
-    res.status(201).json({ success: true, visitor, isPreApproved });
+    // Return the plaintext flat number to the client — the guard app needs to display it,
+    // not the ciphertext that just got stored.
+    res.status(201).json({ success: true, visitor: { ...visitor, flatNumber }, isPreApproved });
   }
 );
 
@@ -169,6 +176,7 @@ visitorsRouter.get('/', async (req: Request, res: Response) => {
 
   const visitorsDecrypted = await Promise.all(visitors.map(async v => ({
     ...v,
+    flatNumber: decryptField(v.flatNumber),
     visitorPhone: v.visitorPhone ? decryptField(v.visitorPhone) : null,
     visitorPhoto: v.visitorPhoto ? await storageService.getSignedUrl(v.visitorPhoto) : null,
   })));
@@ -194,7 +202,7 @@ visitorsRouter.put('/:id/approve', verifyHmac, async (req: Request, res: Respons
     data: { status: 'approved', approvedById: userId, entryTime: new Date() },
   });
 
-  res.json({ success: true, visitor: updated });
+  res.json({ success: true, visitor: { ...updated, flatNumber: decryptField(updated.flatNumber) } });
 });
 
 // ─── PUT /visitors/:id/reject — Resident rejects visitor ─────────────────────
@@ -215,7 +223,7 @@ visitorsRouter.put('/:id/reject', async (req: Request, res: Response) => {
     data: { status: 'rejected', approvedById: userId },
   });
 
-  res.json({ success: true, visitor: updated });
+  res.json({ success: true, visitor: { ...updated, flatNumber: decryptField(updated.flatNumber) } });
 });
 
 // ─── PUT /visitors/:id/exit — Guard marks exit ───────────────────────────────
@@ -235,7 +243,7 @@ visitorsRouter.put('/:id/exit', async (req: Request, res: Response) => {
     data: { exitTime: new Date() },
   });
 
-  res.json({ success: true, visitor: updated });
+  res.json({ success: true, visitor: { ...updated, flatNumber: decryptField(updated.flatNumber) } });
 });
 
 // ─── POST /visitors/pre-approve — Add pre-approval rule ──────────────────────

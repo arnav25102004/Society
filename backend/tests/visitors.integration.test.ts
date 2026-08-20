@@ -1,5 +1,6 @@
 import express from 'express';
 import request from 'supertest';
+import { encryptSearchable } from '../src/utils/encryption';
 
 const societyMemberFindFirst = jest.fn();
 const societyMemberFindMany = jest.fn();
@@ -101,6 +102,64 @@ describe('visitors router — guard registration (no HMAC required)', () => {
   });
 });
 
+describe('visitors router — flatNumber encryption consistency', () => {
+  // Regression test: SocietyMember.flatNumber and PreApproval.flatNumber are always
+  // stored encrypted (encryptSearchable, deterministic). Visitor.flatNumber must be
+  // stored the same way, or every comparison against it (pre-approval matching,
+  // resident notification lookup, the resident's own visitor list, approve/reject)
+  // silently fails to match — which is exactly what happened before this fix.
+  const app = buildApp();
+  beforeEach(() => {
+    jest.resetAllMocks();
+    societyMemberFindMany.mockResolvedValue([]);
+    storageSave.mockResolvedValue('photo-url');
+  });
+
+  it('encrypts flatNumber on visitor creation using the same scheme as SocietyMember.flatNumber', async () => {
+    societyMemberFindFirst
+      .mockResolvedValueOnce({ role: 'guard', flatNumber: null }) // hasPermission lookup
+      .mockResolvedValueOnce({ role: 'guard' }); // guardMember lookup
+    preApprovalFindFirst.mockResolvedValueOnce(null);
+    visitorCreate.mockImplementationOnce(async ({ data }: any) => ({ id: 'visitor-1', status: 'pending', ...data }));
+
+    await request(app)
+      .post('/visitors')
+      .set('Authorization', `Bearer ${tokenFor('guard')}`)
+      .field('societyId', SOCIETY_ID)
+      .field('flatNumber', 'A-101')
+      .field('visitorName', 'Ramesh Kumar')
+      .field('purpose', 'delivery');
+
+    const [[createArgs]] = visitorCreate.mock.calls;
+    const storedFlatNumber = createArgs.data.flatNumber;
+
+    // Must not be the raw plaintext the guard typed...
+    expect(storedFlatNumber).not.toBe('A-101');
+    // ...and must exactly equal what a SocietyMember row would store for the same
+    // flat, since that's what approve/reject/list compare it against.
+    expect(storedFlatNumber).toBe(encryptSearchable('A-101'));
+  });
+
+  it('uses the encrypted flatNumber (not plaintext) when looking up pre-approvals', async () => {
+    societyMemberFindFirst
+      .mockResolvedValueOnce({ role: 'guard', flatNumber: null })
+      .mockResolvedValueOnce({ role: 'guard' });
+    preApprovalFindFirst.mockResolvedValueOnce(null);
+    visitorCreate.mockResolvedValueOnce({ id: 'visitor-1', status: 'pending' });
+
+    await request(app)
+      .post('/visitors')
+      .set('Authorization', `Bearer ${tokenFor('guard')}`)
+      .field('societyId', SOCIETY_ID)
+      .field('flatNumber', 'A-101')
+      .field('visitorName', 'Ramesh Kumar')
+      .field('purpose', 'delivery');
+
+    const [[lookupArgs]] = preApprovalFindFirst.mock.calls;
+    expect(lookupArgs.where.flatNumber).toBe(encryptSearchable('A-101'));
+  });
+});
+
 describe('visitors router — resident approve (per-user HMAC required)', () => {
   const app = buildApp();
   beforeEach(() => jest.resetAllMocks());
@@ -134,12 +193,16 @@ describe('visitors router — resident approve (per-user HMAC required)', () => 
   });
 
   it('approves the visitor when signed with the correct per-user key', async () => {
+    // Both flatNumber values are encrypted the same way they'd be in the real DB —
+    // Visitor.flatNumber and SocietyMember.flatNumber must match at the ciphertext
+    // level for the route's `where: { flatNumber: visitor.flatNumber }` lookup to work.
+    const encryptedFlat = encryptSearchable('A-101');
     (hmacKeyService.get as jest.Mock).mockResolvedValueOnce('the-real-key');
     visitorFindUnique.mockResolvedValueOnce({
-      id: 'visitor-1', status: 'pending', societyId: SOCIETY_ID, flatNumber: 'A-101',
+      id: 'visitor-1', status: 'pending', societyId: SOCIETY_ID, flatNumber: encryptedFlat,
     });
-    societyMemberFindFirst.mockResolvedValueOnce({ role: 'owner', flatNumber: 'A-101' });
-    visitorUpdate.mockResolvedValueOnce({ id: 'visitor-1', status: 'approved' });
+    societyMemberFindFirst.mockResolvedValueOnce({ role: 'owner', flatNumber: encryptedFlat });
+    visitorUpdate.mockResolvedValueOnce({ id: 'visitor-1', status: 'approved', flatNumber: encryptedFlat });
 
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = generateHmac({}, timestamp, 'the-real-key');
