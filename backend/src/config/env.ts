@@ -56,11 +56,16 @@ export const env = {
     fast2smsApiKey: process.env.FAST2SMS_API_KEY ?? '',
     msg91AuthKey: process.env.MSG91_AUTH_KEY ?? '',
     msg91TemplateId: process.env.MSG91_TEMPLATE_ID ?? '',
-    // Google Play reviewer test account — logs in with a fixed OTP instead of a real
-    // SMS, since reviewers can't receive texts. Scoped to exactly one phone number,
-    // set as the "test credentials" in the Play Console submission. Unset either var
-    // in production to disable entirely.
-    reviewAccountPhone: process.env.REVIEW_ACCOUNT_PHONE ?? '',
+    // Google Play reviewer / internal test accounts — log in with a fixed OTP instead
+    // of a real SMS, since reviewers can't receive texts. REVIEW_ACCOUNT_PHONE accepts
+    // a comma-separated list so multiple roles (admin, guard, resident) can each have
+    // their own pre-approved test number, all sharing one fixed OTP. Set the phone used
+    // for Play Console's "test credentials" field to one of these numbers. Unset either
+    // var in production to disable entirely.
+    reviewAccountPhones: (process.env.REVIEW_ACCOUNT_PHONE ?? '')
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean),
     reviewAccountOtp: process.env.REVIEW_ACCOUNT_OTP ?? '',
   },
 

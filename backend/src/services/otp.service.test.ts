@@ -12,7 +12,7 @@ const envMock = {
   isDev: true,
   otp: {
     expirySeconds: 600, provider: 'console', fast2smsApiKey: 'test-key', msg91AuthKey: '', msg91TemplateId: '',
-    reviewAccountPhone: '', reviewAccountOtp: '',
+    reviewAccountPhones: [] as string[], reviewAccountOtp: '',
   },
 };
 jest.mock('../config/env', () => ({ env: envMock }));
@@ -85,12 +85,12 @@ describe('otpService', () => {
 
   describe('Play Store reviewer account', () => {
     afterEach(() => {
-      envMock.otp.reviewAccountPhone = '';
+      envMock.otp.reviewAccountPhones = [];
       envMock.otp.reviewAccountOtp = '';
     });
 
     it('send() succeeds without touching redis/rate-limits/real SMS when both env vars are set', async () => {
-      envMock.otp.reviewAccountPhone = '6398218178';
+      envMock.otp.reviewAccountPhones = ['6398218178'];
       envMock.otp.reviewAccountOtp = '123456';
       envMock.otp.provider = 'fast2sms';
 
@@ -102,7 +102,7 @@ describe('otpService', () => {
     });
 
     it('is inert for the review phone number when the env vars are unset', async () => {
-      // reviewAccountPhone/Otp default to '' in this describe block's afterEach —
+      // reviewAccountPhones/Otp default to []/'' in this describe block's afterEach —
       // a phone number that happens to match a blank config must not bypass anything.
       envMock.otp.provider = 'console';
       redisMock.incr.mockResolvedValueOnce(1);
@@ -113,7 +113,7 @@ describe('otpService', () => {
     });
 
     it('verify() accepts only the exact configured OTP for the review phone', async () => {
-      envMock.otp.reviewAccountPhone = '6398218178';
+      envMock.otp.reviewAccountPhones = ['6398218178'];
       envMock.otp.reviewAccountOtp = '123456';
 
       expect(await otpService.verify('6398218178', '123456')).toBe(true);
@@ -121,20 +121,31 @@ describe('otpService', () => {
     });
 
     it('verify() rejects a wrong OTP for the review phone (does not fall through to real check)', async () => {
-      envMock.otp.reviewAccountPhone = '6398218178';
+      envMock.otp.reviewAccountPhones = ['6398218178'];
       envMock.otp.reviewAccountOtp = '123456';
 
       expect(await otpService.verify('6398218178', '999999')).toBe(false);
       expect(redisMock.get).not.toHaveBeenCalled();
     });
 
-    it('does not accept the review OTP for a different phone number', async () => {
-      envMock.otp.reviewAccountPhone = '6398218178';
+    it('does not accept the review OTP for a phone number outside the configured list', async () => {
+      envMock.otp.reviewAccountPhones = ['6398218178'];
       envMock.otp.reviewAccountOtp = '123456';
       redisMock.get.mockResolvedValueOnce(null);
 
       expect(await otpService.verify('9999999999', '123456')).toBe(false);
       expect(redisMock.get).toHaveBeenCalled(); // fell through to the normal Redis-backed check
+    });
+
+    it('supports multiple review phone numbers sharing the same fixed OTP', async () => {
+      // e.g. one number pre-approved as admin, another as guard — both testable
+      // without swapping REVIEW_ACCOUNT_PHONE back and forth on every role check.
+      envMock.otp.reviewAccountPhones = ['6398218178', '7411825558'];
+      envMock.otp.reviewAccountOtp = '123456';
+
+      expect(await otpService.verify('6398218178', '123456')).toBe(true);
+      expect(await otpService.verify('7411825558', '123456')).toBe(true);
+      expect(redisMock.get).not.toHaveBeenCalled();
     });
   });
 

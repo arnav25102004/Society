@@ -53,7 +53,7 @@ async function sendViaMsg91(phone: string, otp: string): Promise<void> {
 }
 
 function isReviewAccount(phone: string): boolean {
-  return !!env.otp.reviewAccountPhone && !!env.otp.reviewAccountOtp && phone === env.otp.reviewAccountPhone;
+  return !!env.otp.reviewAccountOtp && env.otp.reviewAccountPhones.includes(phone);
 }
 
 // ─── Main OTP service ─────────────────────────────────────────────────────────
