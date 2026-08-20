@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Alert, RefreshControl, Modal, Image,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
 import { api } from '../../services/api';
@@ -61,7 +62,16 @@ export function GateScreen({ navigation }: any) {
   async function handleApprove(visitorId: string) {
     setActionLoading(true);
     try {
-      const headers = await signRequest({});
+      // Pass headers explicitly here (not just via the request interceptor) —
+      // supplying a custom `headers` object in the per-call config can otherwise
+      // clobber the Authorization header axios' interceptor already set, causing
+      // a "No token provided" 401 even though the user is logged in.
+      const accessToken = await SecureStore.getItemAsync('sh_access_token');
+      const signatureHeaders = await signRequest({});
+      const headers = {
+        ...signatureHeaders,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      };
       await api.put(`/visitors/${visitorId}/approve`, {}, { headers });
       setSelectedVisitor(null);
       loadVisitors();
@@ -76,7 +86,9 @@ export function GateScreen({ navigation }: any) {
   async function handleReject(visitorId: string) {
     setActionLoading(true);
     try {
-      await api.put(`/visitors/${visitorId}/reject`);
+      const accessToken = await SecureStore.getItemAsync('sh_access_token');
+      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
+      await api.put(`/visitors/${visitorId}/reject`, {}, { headers });
       setSelectedVisitor(null);
       loadVisitors();
     } catch (err: any) {
