@@ -106,7 +106,8 @@ export const env = {
     groqBaseUrl: process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1',
     // Fast + cheap model with strict Structured Outputs (triage, draft).
     modelFast: process.env.AI_MODEL_FAST ?? 'openai/gpt-oss-20b',
-    // Capable model with tool calling (chat, agent).
-    modelSmart: process.env.AI_MODEL_SMART ?? 'llama-3.3-70b-versatile',
+    // Capable model with tool calling (chat, agent). llama-3.3-70b-versatile was
+    // deprecated by Groq — openai/gpt-oss-120b is the current replacement.
+    modelSmart: process.env.AI_MODEL_SMART ?? 'openai/gpt-oss-120b',
   },
 } as const;
