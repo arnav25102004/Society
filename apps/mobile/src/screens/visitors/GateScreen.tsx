@@ -8,7 +8,6 @@ import * as SecureStore from 'expo-secure-store';
 import { Colors, Spacing, Radius, FontSizes } from '../../theme';
 import { useAuthStore } from '../../store/authStore';
 import { api } from '../../services/api';
-import { signRequest } from '../../services/hmac';
 
 const PURPOSE_ICON: Record<string, string> = {
   delivery: 'package-variant-closed',
@@ -62,16 +61,9 @@ export function GateScreen({ navigation }: any) {
   async function handleApprove(visitorId: string) {
     setActionLoading(true);
     try {
-      // Pass headers explicitly here (not just via the request interceptor) —
-      // supplying a custom `headers` object in the per-call config can otherwise
-      // clobber the Authorization header axios' interceptor already set, causing
-      // a "No token provided" 401 even though the user is logged in.
+      // No HMAC signing here — matches /reject's protection level (JWT auth only).
       const accessToken = await SecureStore.getItemAsync('sh_access_token');
-      const signatureHeaders = await signRequest({});
-      const headers = {
-        ...signatureHeaders,
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      };
+      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined;
       await api.put(`/visitors/${visitorId}/approve`, {}, { headers });
       setSelectedVisitor(null);
       loadVisitors();

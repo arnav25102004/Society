@@ -5,7 +5,6 @@ import { Prisma } from '@prisma/client';
 
 import { validate } from '../middleware/validate';
 import { requireAuth, AuthenticatedRequest } from '../middleware/auth';
-import { verifyHmac } from '../middleware/hmac';
 import { prisma } from '../config/db';
 import { storageService } from '../services/storage.service';
 import { notificationService } from '../services/notification.service';
@@ -184,9 +183,12 @@ visitorsRouter.get('/', async (req: Request, res: Response) => {
 });
 
 // ─── PUT /visitors/:id/approve — Resident approves visitor ───────────────────
-// HMAC-signed: mobile must include X-Signature + X-Timestamp headers
+// Not HMAC-signed: matches /reject's protection level (requireAuth only). The
+// per-user Redis-backed signing key HMAC scheme was intermittently rejecting
+// legitimate same-device requests with "Invalid request signature" and blocking
+// the approve flow in production — removed rather than shipped broken.
 
-visitorsRouter.put('/:id/approve', verifyHmac, async (req: Request, res: Response) => {
+visitorsRouter.put('/:id/approve', async (req: Request, res: Response) => {
   const { userId } = (req as AuthenticatedRequest).user;
   const visitor = await prisma.visitor.findUnique({ where: { id: req.params.id } });
   if (!visitor) return res.status(404).json({ success: false, message: 'Visitor not found' });
